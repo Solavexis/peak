@@ -1,0 +1,40 @@
+local StarterGui = game:GetService("StarterGui")
+local Players = game:GetService("Players")
+local MarketplaceService = game:GetService("MarketplaceService")
+
+local LocalPlayer = Players.LocalPlayer
+local Name = LocalPlayer.Name
+local PlaceId = game.PlaceId
+
+local function N(title, text, icon, duration, button1, button2)
+	local notification = {
+		Title = title or "",
+		Text = text or "",
+		Icon = icon or "",
+		Duration = duration or 5
+	}
+
+	if button1 then
+		notification.Button1 = button1
+	end
+
+	if button2 then
+		notification.Button2 = button2
+	end
+
+	pcall(function()
+		StarterGui:SetCore("SendNotification", notification)
+	end)
+end
+
+local productInfo = MarketplaceService:GetProductInfo(PlaceId, Enum.InfoType.Asset)
+local OwnerName = productInfo.Creator.Name
+
+_G.Badge = _G.Badge or "test"
+
+N(
+	"Badge Awarded",
+	Name .. " won " .. OwnerName .. "'s \"" .. _G.Badge .. "\" award!",
+	"rbxassetid://206410289",
+	6
+)

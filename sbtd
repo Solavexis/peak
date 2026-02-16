@@ -232,7 +232,7 @@ local selected = data.SelectedTowers
 _G.stars = stars or _G.stars
 _G.wins = wins or _G.wins
 _G.candies = candy or _G.candies
-_G.halloween = halloween or _G.halloween
+_G.halloween = _G.halloween or halloween
 
 local H = Window:CreateTab("Home", "home")
 local M = Window:CreateTab("Misc", "home")
@@ -244,7 +244,7 @@ H:CreateParagraph({Title = "ello!", Content = "Welcome! " .. Display .. " (" .. 
 H:CreateLabel("Stars: " .. _G.stars, 4483362458, Color3.fromRGB(255, 255, 255), false)
 H:CreateLabel("Wins: " .. _G.wins, 4483362458, Color3.fromRGB(255, 255, 255), false)
 if _G.halloween then
-H:CreateLabel("Candies: " .. _G.candies, 4483362458, Color3.fromRGB(255, 255, 255), false)
+    H:CreateLabel("Candies: " .. _G.candies, 4483362458, Color3.fromRGB(255, 255, 255), false)
 end
 
 -- Misc
@@ -269,14 +269,14 @@ M:CreateButton({
 
 M:CreateDivider()
 if _G.halloween then
-M:CreateSection("Candies")
+    M:CreateSection("Candies")
 
-M:CreateButton({
-    Name = "Auto Farm Candies",
-    Callback = function()
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/sbtd-candy"))()
-    end,
-})
+    M:CreateButton({
+        Name = "Auto Farm Candies",
+        Callback = function()
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/sbtd-candy"))()
+        end,
+    })
 end
 
 M:CreateSection("Wins")
@@ -305,13 +305,13 @@ local function teleport(map)
 end
 
 local maps={
-    {"Desert", 1}
-    {"Slapple Island",}
-    {"Garden", 3}
-    {"Rocky Island", 4}
-    {"Void", 5}
-    {"Future", 6}
-    {"Limbo", 7}
+    {"Desert", 1},
+    {"Slapple Island", 2},
+    {"Garden", 3},
+    {"Rocky Island", 4},
+    {"Void", 5},
+    {"Future", 6},
+    {"Limbo", 7},
 }
 
 

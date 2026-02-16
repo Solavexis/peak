@@ -1,5 +1,6 @@
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LP = Players.LocalPlayer
 local Display = LP.DisplayName
 local User = LP.Name
@@ -218,7 +219,6 @@ local Window = Rayfield:CreateWindow({
    }
 })
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local data = ReplicatedStorage.GetData:InvokeServer()
 
 local codeBreaker = data.CodeBreaker
@@ -293,6 +293,25 @@ T:CreateButton({
     end,
 })
 
+local function teleport(map)
+    local party=ReplicatedStorage:FindFirstChild("Party")
+    if not party then return end
+    local tp=party:FindFirstChild("Teleport")
+    if not tp then return end
+    tp:InvokeServer(map,true)
+end
+
+local maps={
+    "Desert",
+    "Slapple Island",
+    "Garden",
+    "Rocky Island",
+    "Void",
+    "Future",
+    "Limbo"
+}
+
+
 local function TP(id)
 	TeleportService:Teleport(id,LP)
 end
@@ -302,19 +321,19 @@ local places={
 	{"'it\'s raining tacos' or 'Potato Place'",75011717332634},
 	{"'...' or Elude Maze",121263942043585},
 	{":moyai:",91235618441570},
-	{"Desert",76471028557198},
-	{"Slapple Island",132021850593446},
-	{"Garden",127407189772481},
-	{"Rocky Island",88016360501988},
-	{"Void",95720502858485},
-	{"Future",125995205473418},
-	{"Limbo",91569927171575},
 }
 
 for _,v in ipairs(places) do
 	T:CreateButton({
 		Name="Teleport to "..v[1],
 		Callback=function() TP(v[2]) end
+	})
+end
+
+for _,v in ipairs(maps) do
+	T:CreateButton({
+		Name="Teleport to "..v[1],
+		Callback=function() teleport(v[1]) end
 	})
 end
 
@@ -329,6 +348,7 @@ T:CreateButton({
 
 local function createTab(name)
     if name == "Redacted" then
+        G:CreateDivider()
         G:CreateSection("[REDACTED]")
 
         G:CreateButton({
@@ -368,10 +388,11 @@ local function createTab(name)
                 end
             end,
         })
-        elseif name == "Moai" then
-            G:CreateSection("Moai")
+    elseif name == "Moai" then
+        G:CreateDivider()
+        G:CreateSection("Moai")
 
-            G:CreateButton({
+        G:CreateButton({
                 Name = "Teleport to '...' or Elude Maze",
                 Callback = function()
                     TP(121263942043585)
@@ -560,7 +581,8 @@ local function createTab(name)
                     Notify("Room 6 Code", "Answer: " .. final_code, 30, 4483362458)
                 end,
             })
-            elseif name == "Potato" then
+        elseif name == "Potato" then
+            G:CreateDivider()
             G:CreateSection("Potato")
 
             G:CreateButton({
@@ -585,7 +607,8 @@ local function createTab(name)
                     end
                 end,
             })
-            elseif name == "Knockoff" then
+        elseif name == "Knockoff" then
+            G:CreateDivider()
             G:CreateSection("Knockoff")
 
             G:CreateButton({
@@ -611,7 +634,8 @@ local function createTab(name)
                     game.Players.LocalPlayer.Character:SetPrimaryPartCFrame(CFrame.new(-169, 3, 115))
                 end,
             })
-            elseif name == "Orbit" then
+        elseif name == "Orbit" then
+            G:CreateDivider()
             G:CreateSection("Orbit")
 
             G:CreateButton({
@@ -636,7 +660,7 @@ local function createTab(name)
                 end,
             })
         end
-end)
+end
 
 -- Gloves
 G:CreateButton({
@@ -673,8 +697,6 @@ G:CreateButton({
         createTab("Redacted")
     end,
 })
-
-G:CreateDivider()
 
 Notify("Notification!", "Script Loaded!", 5, 4483362458)
 return monitorLight

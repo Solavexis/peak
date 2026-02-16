@@ -21,13 +21,21 @@ local function saveGValues()
         return 
     end
     
+    local blacklist = {
+        halloween = true
+    }
+    
     local success, data = pcall(function()
         local t = {}
-        for k,v in pairs(_G) do
-            if typeof(v) == "string" or typeof(v) == "number" or typeof(v) == "boolean" then
-                t[k] = v
+        
+        for k, v in pairs(_G) do
+            if not blacklist[k] then
+                if typeof(v) == "string" or typeof(v) == "number" or typeof(v) == "boolean" then
+                    t[k] = v
+                end
             end
         end
+        
         return t
     end)
     
@@ -43,8 +51,13 @@ local function saveGValues()
     end
     
     local writeSuccess, writeErr = pcall(writefile, saveFile, jsonData)
+    
     if writeSuccess then
-        safeNotify("Saved", "G values saved ("..tostring(#data).." keys)")
+        local count = 0
+        for _ in pairs(data) do
+            count += 1
+        end
+        safeNotify("Saved", "G values saved ("..tostring(count).." keys)")
     else
         safeNotify("Save Failed", "writefile error: "..tostring(writeErr))
     end

@@ -234,14 +234,15 @@ local Window = Rayfield:CreateWindow({
    }
 })
 
-local data = ReplicatedStorage:WaitForChild("GetData"):InvokeServer()
-
-local codeBreaker = data.CodeBreaker
-local stars = data.Stars
-local wins = data.Wins
-local candy = data.Candy
-local owned = data.OwnedTowers
-local selected = data.SelectedTowers
+if game.PlaceId == "93249115521759" then
+    local data = ReplicatedStorage:WaitForChild("GetData"):InvokeServer()
+    local codeBreaker = data.CodeBreaker
+    local stars = data.Stars
+    local wins = data.Wins
+    local candy = data.Candy
+    local owned = data.OwnedTowers
+    local selected = data.SelectedTowers
+end
 
 _G.stars = stars or _G.stars
 _G.wins = wins or _G.wins

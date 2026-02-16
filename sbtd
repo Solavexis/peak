@@ -364,6 +364,8 @@ T:CreateButton({
     end,
 })
 
+_G.Sign = _G.Sign
+
 local function createTab(name)
     if name == "Redacted" then
         G:CreateDivider()
@@ -424,8 +426,6 @@ local function createTab(name)
                 end,
             })
 
-            _G.Sign = _G.Sign
-
             G:CreateButton({
                 Name = "Get Room 1 Code (Go on Elude Maze)",
                 Callback = function()
@@ -433,6 +433,7 @@ local function createTab(name)
                         local Sign = workspace.OtherCode.Text.SurfaceGui.TextLabel.Text
                         Notify("Notification!", "Code: ".. Sign .. "!", 30, 4483362458)
                         _G.Sign = Sign
+                        saveGValues()
                     end)
                 end,
             })

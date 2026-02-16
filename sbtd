@@ -234,7 +234,7 @@ local Window = Rayfield:CreateWindow({
    }
 })
 
-local data = ReplicatedStorage.GetData:InvokeServer()
+local data = ReplicatedStorage:WaitForChild("GetData"):InvokeServer()
 
 local codeBreaker = data.CodeBreaker
 local stars = data.Stars

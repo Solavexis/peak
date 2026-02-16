@@ -305,13 +305,13 @@ local function teleport(map)
 end
 
 local maps={
-    "Desert",
-    "Slapple Island",
-    "Garden",
-    "Rocky Island",
-    "Void",
-    "Future",
-    "Limbo"
+    {"Desert", 1}
+    {"Slapple Island",}
+    {"Garden", 3}
+    {"Rocky Island", 4}
+    {"Void", 5}
+    {"Future", 6}
+    {"Limbo", 7}
 }
 
 

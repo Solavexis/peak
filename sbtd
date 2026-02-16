@@ -6,6 +6,7 @@ local Display = LP.DisplayName
 local User = LP.Name
 local saveFile = "GValuesSBTD_" .. LP.UserId .. ".json"
 local Http = game:GetService("HttpService")
+local halloween = false
 
 local function safeNotify(title, msg, time, color)
     pcall(function()
@@ -225,14 +226,13 @@ local codeBreaker = data.CodeBreaker
 local stars = data.Stars
 local wins = data.Wins
 local candy = data.Candy
-local winterwin = data.WinterWinFix
 local owned = data.OwnedTowers
 local selected = data.SelectedTowers
 
 _G.stars = stars or _G.stars
 _G.wins = wins or _G.wins
 _G.candies = candy or _G.candies
-_G.winter = winterwin or _G.winter
+_G.halloween = halloween or _G.halloween
 
 local H = Window:CreateTab("Home", "home")
 local M = Window:CreateTab("Misc", "home")
@@ -243,8 +243,9 @@ local G = Window:CreateTab("Gloves", "home")
 H:CreateParagraph({Title = "ello!", Content = "Welcome! " .. Display .. " (" .. User .. ") Thank you for using my script! :)"})
 H:CreateLabel("Stars: " .. _G.stars, 4483362458, Color3.fromRGB(255, 255, 255), false)
 H:CreateLabel("Wins: " .. _G.wins, 4483362458, Color3.fromRGB(255, 255, 255), false)
+if _G.halloween then
 H:CreateLabel("Candies: " .. _G.candies, 4483362458, Color3.fromRGB(255, 255, 255), false)
-H:CreateLabel("Winter Wins: " .. _G.winter, 4483362458, Color3.fromRGB(255, 255, 255), false)
+end
 
 -- Misc
 M:CreateButton({
@@ -267,6 +268,7 @@ M:CreateButton({
 })
 
 M:CreateDivider()
+if _G.halloween then
 M:CreateSection("Candies")
 
 M:CreateButton({
@@ -275,6 +277,7 @@ M:CreateButton({
         loadstring(game:HttpGet("https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/sbtd-candy"))()
     end,
 })
+end
 
 M:CreateSection("Wins")
 

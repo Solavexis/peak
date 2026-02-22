@@ -1,0 +1,355 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+if playerGui:FindFirstChild("AutoCrateOpener") then
+    playerGui.AutoCrateOpener:Destroy()
+end
+
+local CratesData       = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Data"):WaitForChild("Crates"))
+local CratesController = require(ReplicatedStorage:WaitForChild("ClientModules"):WaitForChild("CratesController"))
+local GetItemInfo      = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("GetItemInfo"))
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AutoCrateOpener"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = playerGui
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 360, 0, 360)
+frame.Position = UDim2.new(0.5, -180, 0.5, -180)
+frame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+frame.BorderSizePixel = 0
+frame.Parent = screenGui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 10)
+corner.Parent = frame
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 35)
+title.BackgroundTransparency = 1
+title.Text = "AUTO CRATE OPENER"
+title.TextColor3 = Color3.fromRGB(255, 215, 0)
+title.TextScaled = true
+title.Font = Enum.Font.GothamBold
+title.Parent = frame
+
+-- Crate
+local lblCrate = Instance.new("TextLabel", frame)
+lblCrate.Size = UDim2.new(1, -20, 0, 22)
+lblCrate.Position = UDim2.new(0, 10, 0, 45)
+lblCrate.BackgroundTransparency = 1
+lblCrate.Text = "Crate Name:"
+lblCrate.TextColor3 = Color3.fromRGB(180,180,180)
+lblCrate.TextXAlignment = Enum.TextXAlignment.Left
+lblCrate.Font = Enum.Font.Gotham
+lblCrate.TextSize = 14
+
+local tbCrate = Instance.new("TextBox", frame)
+tbCrate.Size = UDim2.new(1, -20, 0, 32)
+tbCrate.Position = UDim2.new(0, 10, 0, 68)
+tbCrate.BackgroundColor3 = Color3.fromRGB(40,40,40)
+tbCrate.PlaceholderText = "Gadget Crate 1"
+tbCrate.Text = "Gadget Crate 1"
+tbCrate.TextColor3 = Color3.new(1,1,1)
+tbCrate.TextScaled = true
+tbCrate.Font = Enum.Font.Gotham
+Instance.new("UICorner", tbCrate).CornerRadius = UDim.new(0,8)
+
+-- Target section
+local lblTarget = Instance.new("TextLabel", frame)
+lblTarget.Size = UDim2.new(1, -20, 0, 22)
+lblTarget.Position = UDim2.new(0, 10, 0, 110)
+lblTarget.BackgroundTransparency = 1
+lblTarget.Text = "Stop when get this item + type:"
+lblTarget.TextColor3 = Color3.fromRGB(180,180,180)
+lblTarget.TextXAlignment = Enum.TextXAlignment.Left
+lblTarget.Font = Enum.Font.Gotham
+lblTarget.TextSize = 14
+
+local tbItem = Instance.new("TextBox", frame)
+tbItem.Size = UDim2.new(0.58, 0, 0, 32)
+tbItem.Position = UDim2.new(0, 10, 0, 135)
+tbItem.BackgroundColor3 = Color3.fromRGB(40,40,40)
+tbItem.PlaceholderText = "Item name (exact)"
+tbItem.Text = ""
+tbItem.TextColor3 = Color3.new(1,1,1)
+tbItem.TextScaled = true
+tbItem.Font = Enum.Font.Gotham
+Instance.new("UICorner", tbItem).CornerRadius = UDim.new(0,8)
+
+local tbType = Instance.new("TextBox", frame)
+tbType.Size = UDim2.new(0.38, -15, 0, 32)
+tbType.Position = UDim2.new(0.62, 5, 0, 135)
+tbType.BackgroundColor3 = Color3.fromRGB(40,40,40)
+tbType.PlaceholderText = "Type (Hat, Face, Suit, Gadget)"
+tbType.Text = ""
+tbType.TextColor3 = Color3.new(1,1,1)
+tbType.TextScaled = true
+tbType.Font = Enum.Font.Gotham
+Instance.new("UICorner", tbType).CornerRadius = UDim.new(0,8)
+
+local lblPred = Instance.new("TextLabel", frame)
+lblPred.Size = UDim2.new(1, -20, 0, 22)
+lblPred.Position = UDim2.new(0, 10, 0, 175)
+lblPred.BackgroundTransparency = 1
+lblPred.Text = "Predecessor:"
+lblPred.TextColor3 = Color3.fromRGB(180,180,180)
+lblPred.TextXAlignment = Enum.TextXAlignment.Left
+lblPred.Font = Enum.Font.Gotham
+lblPred.TextSize = 14
+lblPred.Visible = false
+
+local tbPred = Instance.new("TextBox", frame)
+tbPred.Size = UDim2.new(1, -20, 0, 32)
+tbPred.Position = UDim2.new(0, 10, 0, 198)
+tbPred.BackgroundColor3 = Color3.fromRGB(40,40,40)
+tbPred.PlaceholderText = "Predecessor name"
+tbPred.Text = ""
+tbPred.TextColor3 = Color3.new(1,1,1)
+tbPred.TextScaled = true
+tbPred.Font = Enum.Font.Gotham
+tbPred.Visible = false
+Instance.new("UICorner", tbPred).CornerRadius = UDim.new(0,8)
+
+local lblMode = Instance.new("TextLabel", frame)
+lblMode.Size = UDim2.new(1, -20, 0, 22)
+lblMode.Position = UDim2.new(0, 10, 0, 238)
+lblMode.BackgroundTransparency = 1
+lblMode.Text = "Mode:"
+lblMode.TextColor3 = Color3.fromRGB(180,180,180)
+lblMode.TextXAlignment = Enum.TextXAlignment.Left
+lblMode.Font = Enum.Font.Gotham
+lblMode.TextSize = 14
+
+local modeDropdown = Instance.new("TextButton", frame)
+modeDropdown.Size = UDim2.new(1, -20, 0, 32)
+modeDropdown.Position = UDim2.new(0, 10, 0, 261)
+modeDropdown.BackgroundColor3 = Color3.fromRGB(50,50,60)
+modeDropdown.Text = "Normal (keep opening)"
+modeDropdown.TextColor3 = Color3.new(1,1,1)
+modeDropdown.TextScaled = true
+modeDropdown.Font = Enum.Font.Gotham
+Instance.new("UICorner", modeDropdown).CornerRadius = UDim.new(0,8)
+
+local modes = {"Normal (keep opening)", "Auto-stop when get target"}
+local currentModeIndex = 1
+
+modeDropdown.MouseButton1Click:Connect(function()
+    currentModeIndex = currentModeIndex % #modes + 1
+    modeDropdown.Text = modes[currentModeIndex]
+end)
+
+local startBtn = Instance.new("TextButton", frame)
+startBtn.Size = UDim2.new(0.45, 0, 0, 45)
+startBtn.Position = UDim2.new(0, 10, 0, 300)
+startBtn.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
+startBtn.Text = "START"
+startBtn.TextColor3 = Color3.new(1,1,1)
+startBtn.TextScaled = true
+startBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", startBtn).CornerRadius = UDim.new(0,8)
+
+local stopBtn = Instance.new("TextButton", frame)
+stopBtn.Size = UDim2.new(0.45, 0, 0, 45)
+stopBtn.Position = UDim2.new(0.5, 5, 0, 300)
+stopBtn.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+stopBtn.Text = "STOP"
+stopBtn.TextColor3 = Color3.new(1,1,1)
+stopBtn.TextScaled = true
+stopBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", stopBtn).CornerRadius = UDim.new(0,8)
+
+local status = Instance.new("TextLabel", frame)
+status.Size = UDim2.new(1, -20, 0, 28)
+status.Position = UDim2.new(0, 10, 0, 355)
+status.BackgroundTransparency = 1
+status.Text = "Status: Stopped"
+status.TextColor3 = Color3.fromRGB(255, 80, 80)
+status.TextScaled = true
+status.Font = Enum.Font.Gotham
+
+local running = false
+
+local function setStatus(txt, col)
+    status.Text = "Status: " .. txt
+    status.TextColor3 = col or Color3.fromRGB(220,220,220)
+end
+
+tbType:GetPropertyChangedSignal("Text"):Connect(function()
+    local t = (tbType.Text or ""):lower()
+    local shouldShow = t:find("gadget") or t:find("skin") or t == "gadget"
+    tbPred.Visible = shouldShow
+    lblPred.Visible = shouldShow
+    
+    local modeY = shouldShow and 238 or 175
+    lblMode.Position = UDim2.new(0, 10, 0, modeY)
+    modeDropdown.Position = UDim2.new(0, 10, 0, modeY + 23)
+    startBtn.Position = UDim2.new(0, 10, 0, modeY + 80)
+    stopBtn.Position = UDim2.new(0.5, 5, 0, modeY + 80)
+    status.Position = UDim2.new(0, 10, 0, modeY + 135)
+end)
+
+local dragging, dragStart, startPos
+frame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = frame.Position
+    end
+end)
+
+frame.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        frame.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+local rarityColors = {
+    Common    = "rgb(150,255,255)",
+    Rare      = "rgb(255,150,150)",
+    Epic      = "rgb(220,160,255)",
+    Legendary = "rgb(255,245,150)",
+    Mythical  = "rgb(200,140,255)",
+}
+
+local function formatChance(val, total)
+    if total <= 0 or val <= 0 then return "?" end
+    local prob = val / total
+    local percent = prob * 100
+    local dec = (percent < 10) and ((percent >= 1) and 1 or 2) or 0
+    local pstr = string.format("%."..dec.."f", percent)
+    local odds = math.round(1 / prob)
+    return pstr .. "%  (1/" .. odds .. ")"
+end
+
+startBtn.MouseButton1Click:Connect(function()
+    if running then return end
+
+    local crateName = tbCrate.Text:match("^%s*(.-)%s*$")
+    if crateName == "" or not CratesData[crateName] then
+        setStatus("Invalid crate name!", Color3.fromRGB(255,80,80))
+        return
+    end
+
+    local targetItem = tbItem.Text:match("^%s*(.-)%s*$")
+    local targetType = tbType.Text:match("^%s*(.-)%s*$")
+    local targetPred = tbPred.Text:match("^%s*(.-)%s*$")
+
+    if targetItem == "" then targetItem = nil end
+    if targetType == "" then targetType = nil end
+    if targetPred == "" then targetPred = nil end
+
+    local autoStopMode = (currentModeIndex == 2)
+
+    if autoStopMode and not targetItem then
+        setStatus("Target item required in auto-stop mode!", Color3.fromRGB(255,140,0))
+        return
+    end
+
+    running = true
+    setStatus("Opening " .. crateName:upper() .. (autoStopMode and " (until target)" or ""), Color3.fromRGB(100,255,100))
+
+    task.spawn(function()
+        while running do
+            local success, result = pcall(function()
+                return ReplicatedStorage.Events.TryOpenCrate:InvokeServer(crateName)
+            end)
+
+            if not success then
+                warn("TryOpenCrate failed:", result)
+                setStatus("Server error → stopped", Color3.fromRGB(255,0,0))
+                running = false
+                break
+            end
+
+            if not result or type(result) ~= "table" or not next(result) then
+                ReplicatedStorage.Events.CreateNotificationEvent:Fire("Failed — you probably own everything in " .. crateName)
+                setStatus("Nothing left – stopped", Color3.fromRGB(255,180,0))
+                running = false
+                break
+            end
+
+            local item   = result[1]
+            local amount = result[2] or 1
+            local extra  = result[3] or {}
+            local itype  = extra.Type or "?"
+            local pred   = extra.Predecessor or "Not gadget"
+
+            local rarity = "?"
+            local itemInfo = GetItemInfo(item, itype, pred)
+            if itemInfo and itemInfo.Rarity then
+                rarity = itemInfo.Rarity
+            end
+
+            local chanceStr = "?"
+            local crate = CratesData[crateName]
+            if crate and crate.LootPool then
+                local total, wanted = 0, 0
+                for _, e in ipairs(crate.LootPool) do
+                    local v = e.Chance or e.Weight or 1
+                    total += v
+                    if e.Name == item then wanted = v end
+                end
+                if wanted > 0 then
+                    chanceStr = formatChance(wanted, total)
+                end
+            end
+
+            local color = rarityColors[rarity] or "rgb(255,255,255)"
+            local msg = string.format(
+                'Got <font color="rgb(255,255,100)">%s</font> (%s, %s) <font color="%s">%s</font> %s – %s',
+                item, itype, pred, color, rarity, chanceStr, crateName
+            )
+
+            print("→ " .. item .. " (" .. itype .. ", " .. pred .. ") " .. rarity .. " " .. chanceStr)
+            ReplicatedStorage.Events.CreateNotificationEvent:Fire(msg)
+
+            pcall(function()
+                CratesController.PlayCrateOpenAnimation(item, amount, extra, crateName)
+            end)
+
+            local waited = 0
+            while _G.InCrateAnimation and waited < 12 do
+                task.wait(0.12)
+                waited += 0.12
+            end
+            task.wait(0.7)
+
+            if autoStopMode and targetItem then
+                local nameMatch = (item:lower() == targetItem:lower())
+                local typeMatch = (not targetType) or (itype:lower() == targetType:lower())
+                local predMatch = (not targetPred) or (pred:lower() == targetPred:lower())
+
+                if nameMatch and typeMatch and predMatch then
+                    setStatus("TARGET ITEM OBTAINED – stopped", Color3.fromRGB(0, 220, 255))
+                    running = false
+                    break
+                end
+            end
+        end
+
+        if not status.Text:find("stopped", 1, true) then
+            setStatus("Stopped", Color3.fromRGB(255,80,80))
+        end
+    end)
+end)
+
+stopBtn.MouseButton1Click:Connect(function()
+    running = false
+    setStatus("Stopping…", Color3.fromRGB(255,180,0))
+end)

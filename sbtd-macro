@@ -20,8 +20,8 @@ local lastTowers = {}
 local UPGRADE_DISTANCE_TOLERANCE = 1.5
 
 local function serializeCFrame(cf)
-	local x,y,z,r00,r01,r02,r10,r11,r12,r20,r21,r22 = cf:GetComponents()
-	return string.format("CFrame.new(%.9f,%.9f,%.9f,%.12f,%.12f,%.12f,%.12f,%.12f,%.12f,%.12f,%.12f,%.12f)", x,y,z,r00,r01,r02,r10,r11,r12,r20,r21,r22)
+	local x,y,z = cf:GetComponents()
+	return string.format("CFrame.new(%.9f,%.9f,%.9f)", x,y,z
 end
 
 local function cframeCloseEnough(a, b)
@@ -124,30 +124,30 @@ if game.PlaceId == MAP_PLACE_ID then
 end
 
 _G.mapname = "Desert" -- map name (if Valentines then it's called Valentines2)
-_G.needtower = "Default, Bomb" -- tower needed
+_G.needtower = "Default, Bomb" -- tower needed (comma separated)
 _G.preciseTiming = true -- don't change if you don't know what you're doing
 _G.url = "urlgoeshere" -- (NEEDED for replaying, (NEEDED TO BE RAW) example of text host site: pastebin, github (need account but a bit more organized) and etc.)
 -- example of url: pastebin: https://pastebin.com/raw/ the string, github: https://raw.githubusercontent.com/ username / repo /refs/heads/main/ nameofthefile
 
 local function equipNeededTowers()
-	local pg = LP:WaitForChild("PlayerGui", 5) if not pg then return end
-	local shop = pg:WaitForChild("ShopGui", 5) if not shop then return end
-	local inv = shop:WaitForChild("Inventory", 5) if not inv then return end
-	for _, item in string.split(_G.needtower, ",") do
-		local trimmed = item:match("^%s*(.-)%s*$")
-		if trimmed ~= "" and not inv:FindFirstChild(trimmed) then
-			ReplicatedStorage:WaitForChild("InteractItem"):InvokeServer(trimmed)
-			task.wait(0.4)
+	local pg = LP:WaitForChild("PlayerGui",5) if not pg then return end
+	local shop = pg:WaitForChild("ShopGui",5) if not shop then return end
+	local inv = shop:WaitForChild("Inventory",5) if not inv then return end
+	for _,item in string.split(_G.needtower,",") do
+		local t = item:match("^%s*(.-)%s*$")
+		if t ~= "" and not inv:FindFirstChild(t) then
+			ReplicatedStorage:WaitForChild("InteractItem"):InvokeServer(t)
+			task.wait(.4)
 		end
 	end
 end
 
 local function queueScript()
-    if syn and syn.queue_on_teleport then
-        syn.queue_on_teleport('loadstring(game:HttpGet("'.. _G.url ..'"))()')
-    elseif queue_on_teleport then
-        queue_on_teleport('loadstring(game:HttpGet("'.. _G.url ..'"))()')
-    end
+	if syn and syn.queue_on_teleport then
+		syn.queue_on_teleport('loadstring(game:HttpGet("'.._G.url..'"))()')
+	elseif queue_on_teleport then
+		queue_on_teleport('loadstring(game:HttpGet("'.._G.url..'"))()')
+	end
 end
 queueScript()
 
@@ -156,15 +156,15 @@ local function touchFinish()
 	local finish = obby:FindFirstChild("Finish") if not finish then return end
 	local hrp = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
 	if not hrp then return end
-	firetouchinterest(hrp, finish, 0) task.wait() firetouchinterest(hrp, finish, 1)
+	firetouchinterest(hrp,finish,0) task.wait() firetouchinterest(hrp,finish,1)
 end
 
 local function teleport(id)
-	if game.PlaceId ~= id then game:GetService("TeleportService"):Teleport(id, LP) end
+	if game.PlaceId ~= id then game:GetService("TeleportService"):Teleport(id,LP) end
 end
 
 local function tp()
-	ReplicatedStorage.Party.Teleport:InvokeServer(_G.mapname, true)
+	ReplicatedStorage.Party.Teleport:InvokeServer(_G.mapname,true)
 end
 
 LP.Idled:Connect(function()
@@ -172,18 +172,22 @@ LP.Idled:Connect(function()
 	VirtualUser:ClickButton2(Vector2.new())
 end)
 
-local function findNearestTower(name, targetCFrame, maxDist)
-	local closest, minDist = nil, maxDist or 3
-	for _, v in workspace.Towers:GetChildren() do
-		if v.Name == name then
-			local dist = (v:GetPivot().Position - targetCFrame.Position).Magnitude
-			if dist < minDist then
-				minDist = dist
-				closest = v
-			end
+local function findNearestTower(name,cf)
+	local closest,dist=nil,math.huge
+	for _,v in workspace.Towers:GetChildren() do
+		if v.Name==name then
+			local d=(v:GetPivot().Position-cf.Position).Magnitude
+			if d<dist then dist=d closest=v end
 		end
 	end
 	return closest
+end
+
+local function parseCF(str)
+	local n={}
+	for x in str:gmatch("-?[%d%.]+") do n[#n+1]=tonumber(x) end
+	if #n<3 then return nil end
+	return CFrame.new(n[1],n[2],n[3])
 end
 
 local actions = {
@@ -192,7 +196,7 @@ local actions = {
 	for _, act in ipairs(recordedActions) do
 		local line = '    {Action = "' .. act.Action .. '", '
 		if act.Action == "Upgrade" then
-			line = line .. 'OldName = "' .. act.OldName:gsub('"', '\\"') .. '", NewName = "' .. act.NewName:gsub('"', '\\"') .. '", '
+			line = line .. 'OldName = "' .. act.OldName:gsub('"', '\\"') .. '", Name = "' .. act.Name:gsub('"', '\\"') .. '", '
 		else
 			line = line .. 'Name = "' .. act.Name:gsub('"', '\\"') .. '", '
 		end
@@ -204,59 +208,26 @@ local actions = {
 }
 
 local function replay()
-	if #actions == 0 then print("No actions recorded") return end
-
-	local startClock = workspace.DistributedGameTime
-	local baseTime = actions[1].Timestamp or 0
-
-	if _G.preciseTiming then
-		for _, act in ipairs(actions) do
-			if not act.Timestamp or not act.CFrameStr then continue end
-			local targetTime = baseTime + (act.Timestamp - baseTime)
-			while workspace.DistributedGameTime < startClock + targetTime do
-				RunService.Heartbeat:Wait()
-			end
-
-			local success, cf = pcall(loadstring, "return " .. act.CFrameStr)
-			if not success or typeof(cf) ~= "CFrame" then warn("Invalid CFrame skipped") continue end
-
-			if act.Action == "Spawn" and act.Name then
-				SpawnTower:InvokeServer(act.Name, cf)
-			elseif act.Action == "Sell" and act.Name then
-				local tower = findNearestTower(act.Name, cf)
-				if tower then SellTower:InvokeServer(tower) end
-			elseif act.Action == "Upgrade" and act.OldName and act.NewName then
-				local oldTower = findNearestTower(act.OldName, cf, 2)
-				if oldTower then
-					SpawnTower:InvokeServer(act.NewName, cf, oldTower)
-				else
-					warn("Upgrade failed - old tower not found: " .. act.OldName)
-				end
-			end
+	if #actions==0 then return end
+	local shift = 7 - actions[1].Timestamp
+	local start = workspace.DistributedGameTime
+	for _,a in ipairs(actions) do
+		local target = start + a.Timestamp + shift
+		while workspace.DistributedGameTime < target do
+			RunService.Heartbeat:Wait()
 		end
-	else
-		for _, act in ipairs(actions) do
-			if not act.CFrameStr then continue end
-			local success, cf = pcall(loadstring, "return " .. act.CFrameStr)
-			if not success or typeof(cf) ~= "CFrame" then continue end
-
-			if act.Action == "Spawn" and act.Name then
-				SpawnTower:InvokeServer(act.Name, cf)
-				task.wait(0.4)
-			elseif act.Action == "Sell" and act.Name then
-				local tower = findNearestTower(act.Name, cf)
-				if tower then SellTower:InvokeServer(tower) end
-				task.wait(0.35)
-			elseif act.Action == "Upgrade" and act.OldName and act.NewName then
-				local oldTower = findNearestTower(act.OldName, cf, 2)
-				if oldTower then
-					SpawnTower:InvokeServer(act.NewName, cf, oldTower)
-				end
-				task.wait(0.4)
-			end
+		local cf = parseCF(a.CFrameStr)
+		if not cf then continue end
+		if a.Action=="Spawn" then
+			SpawnTower:InvokeServer(a.Name,cf)
+		elseif a.Action=="Sell" then
+			local t = findNearestTower(a.Name,cf)
+			if t then SellTower:InvokeServer(t) end
+		elseif a.Action=="Upgrade" then
+			local old = findNearestTower(a.OldName,cf)
+			if old then SpawnTower:InvokeServer(a.Name,cf,old) end
 		end
 	end
-	print("Replay completed!")
 end
 
 task.spawn(function()
@@ -266,21 +237,27 @@ task.spawn(function()
 			local pg = LP.PlayerGui
 			if pg and pg:FindFirstChild("GameGui") then
 				local exit = pg.GameGui:FindFirstChild("Exit")
-				if exit and exit.Visible then teleport(PLACE_MAIN) end
+				if exit and exit.Visible then
+					teleport(PLACE_MAIN)
+				end
 			end
 		elseif id == PLACE_MAIN then
 			touchFinish()
 			equipNeededTowers()
 			task.wait(2.5)
 			tp()
-			task.delay(90, function() if game.PlaceId == PLACE_MAIN then tp() end end)
+			task.delay(90, function()
+				if game.PlaceId == PLACE_MAIN then tp() end
+			end)
 		end
 	end
 end)
 
-if game.PlaceId == MAP_PLACE_ID then replay() end
+if game.PlaceId == MAP_PLACE_ID then
+	replay()
+end
 
-print("Macro loaded | Map: " .. _G.mapname)
+print("Macro loaded | Map: ".._G.mapname)
 ]]
 	return code
 end

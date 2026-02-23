@@ -20,7 +20,7 @@ local recordedActions = {}
 local connection
 local lastTowers = {}
 
-local UPGRADE_DISTANCE_TOLERANCE = 1.5
+local UPGRADE_DISTANCE_TOLERANCE = 0.001
 
 local function serializeCFrame(cf)
 	local x,y,z = cf:GetComponents()

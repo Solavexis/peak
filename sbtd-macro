@@ -6,7 +6,7 @@ local LP = Players.LocalPlayer
 
 local PLACE_MAIN = 93249115521759
 
-if not game.PlaceId == PLACE_MAIN then
+if game.PlaceId == MAP_PLACE_ID then
     local Functions = ReplicatedStorage:WaitForChild("Functions")
     local SpawnTower = Functions:WaitForChild("SpawnTower")
     local SellTower = Functions:WaitForChild("SellTower")
@@ -67,7 +67,7 @@ local function startRecording()
 						OldName = remData.Name,
 						NewName = addData.Name,
 						CFrameStr = cfStr,
-						Timestamp = os.clock()
+						Timestamp = workspace.DistributedTime
 					})
 					added[addTower] = nil
 					break
@@ -81,7 +81,7 @@ local function startRecording()
 				Action = "Spawn",
 				Name = data.Name,
 				CFrameStr = cfStr,
-				Timestamp = os.clock()
+				Timestamp = workspace.DistributedTime
 			})
 		end
 
@@ -91,7 +91,7 @@ local function startRecording()
 				Action = "Sell",
 				Name = data.Name,
 				CFrameStr = cfStr,
-				Timestamp = os.clock()
+				Timestamp = workspace.DistributedTime
 			})
 		end
 
@@ -117,7 +117,7 @@ local LP = Players.LocalPlayer
 local PLACE_MAIN = 93249115521759
 local MAP_PLACE_ID = ]] .. game.PlaceId .. [[
 
-if not game.PlaceId == PLACE_MAIN then
+if game.PlaceId == MAP_PLACE_ID then
     local Functions = ReplicatedStorage:WaitForChild("Functions")
     local SpawnTower = Functions:WaitForChild("SpawnTower")
     local SellTower = Functions:WaitForChild("SellTower")
@@ -206,7 +206,7 @@ local actions = {
 local function replay()
 	if #actions == 0 then print("No actions recorded") return end
 
-	local startClock = os.clock()
+	local startClock = workspace.DistributedTime
 	local baseTime = actions[1].Timestamp or 0
 
 	if _G.preciseTiming then
@@ -394,14 +394,14 @@ local function stopRecording()
 	generateAndShowScript()
 end
 
-if game.PlaceId == PLACE_MAIN then
+if game.PlaceId = PLACE_MAIN then
     local screen = Instance.new("ScreenGui")
     screen.Name = "MacroRecorder"
     screen.ResetOnSpawn = false
     screen.Parent = game:GetService("CoreGui")
 
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0,160,0,160)
+    frame.Size = UDim2.new(0,260,0,60)
     frame.Position = UDim2.new(1,-270,0,15)
     frame.BackgroundColor3 = Color3.fromRGB(35,35,40)
     frame.BorderSizePixel = 0

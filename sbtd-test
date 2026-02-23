@@ -4,12 +4,14 @@ local RunService = game:GetService("RunService")
 local VirtualUser = game:GetService("VirtualUser")
 local LP = Players.LocalPlayer
 
-local Functions = ReplicatedStorage:WaitForChild("Functions")
-local SpawnTower = Functions:WaitForChild("SpawnTower")
-local SellTower = Functions:WaitForChild("SellTower")
-
 local PLACE_MAIN = 93249115521759
 local MAP_PLACE_ID = 124546322564930
+
+if not game.PlaceId == PLACE_MAIN then
+    local Functions = ReplicatedStorage:WaitForChild("Functions")
+    local SpawnTower = Functions:WaitForChild("SpawnTower")
+    local SellTower = Functions:WaitForChild("SellTower")
+end
 
 _G.mapname = "Valentines2" -- map name (if Valentines then it's called Valentines2)
 _G.needtower = "Trophy, Engineer, Buddy, Sun" -- tower needed

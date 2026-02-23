@@ -7,10 +7,13 @@ local LP = Players.LocalPlayer
 local PLACE_MAIN = 93249115521759
 local MAP_PLACE_ID = 124546322564930
 
+local SpawnTower
+local SellTower
+
 if game.PlaceId == MAP_PLACE_ID then
     local Functions = ReplicatedStorage:WaitForChild("Functions")
-    local SpawnTower = Functions:WaitForChild("SpawnTower")
-    local SellTower = Functions:WaitForChild("SellTower")
+    SpawnTower = Functions:WaitForChild("SpawnTower")
+    SellTower = Functions:WaitForChild("SellTower")
 end
 
 _G.mapname = "Valentines2" -- map name (if Valentines then it's called Valentines2)

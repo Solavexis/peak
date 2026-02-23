@@ -6,7 +6,7 @@ local LP = Players.LocalPlayer
 
 local PLACE_MAIN = 93249115521759
 
-if game.PlaceId == MAP_PLACE_ID then
+if not game.PlaceId == PLACE_MAIN then
     local Functions = ReplicatedStorage:WaitForChild("Functions")
     local SpawnTower = Functions:WaitForChild("SpawnTower")
     local SellTower = Functions:WaitForChild("SellTower")
@@ -394,7 +394,7 @@ local function stopRecording()
 	generateAndShowScript()
 end
 
-if game.PlaceId = PLACE_MAIN then
+if not game.PlaceId == PLACE_MAIN then
     local screen = Instance.new("ScreenGui")
     screen.Name = "MacroRecorder"
     screen.ResetOnSpawn = false

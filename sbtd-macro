@@ -13,9 +13,15 @@ local recordedActions = {}
 local connection
 local lastTowers = {}
 
+local UPGRADE_DISTANCE_TOLERANCE = 1.5
+
 local function serializeCFrame(cf)
 	local x,y,z,r00,r01,r02,r10,r11,r12,r20,r21,r22 = cf:GetComponents()
 	return string.format("CFrame.new(%.9f,%.9f,%.9f,%.12f,%.12f,%.12f,%.12f,%.12f,%.12f,%.12f,%.12f,%.12f)", x,y,z,r00,r01,r02,r10,r11,r12,r20,r21,r22)
+end
+
+local function cframeCloseEnough(a, b)
+	return (a.Position - b.Position).Magnitude <= UPGRADE_DISTANCE_TOLERANCE
 end
 
 local function startRecording()
@@ -25,40 +31,75 @@ local function startRecording()
 	lastTowers = {}
 
 	for _, t in workspace.Towers:GetChildren() do
-		lastTowers[t] = true
+		lastTowers[t] = {Name = t.Name, Pivot = t:GetPivot()}
 	end
 
 	connection = RunService.Heartbeat:Connect(function()
 		if not recording then return end
 
 		local current = {}
+		local added = {}
+		local removed = {}
+
 		for _, t in workspace.Towers:GetChildren() do
-			current[t] = true
+			current[t] = {Name = t.Name, Pivot = t:GetPivot()}
 			if not lastTowers[t] then
-				local cfStr = serializeCFrame(t:GetPivot())
-				table.insert(recordedActions, {
-					Action = "Spawn",
-					Name = t.Name,
-					CFrameStr = cfStr,
-					Timestamp = os.clock()
-				})
+				added[t] = current[t]
 			end
 		end
 
-		for tower,_ in lastTowers do
+		for tower, data in lastTowers do
 			if not current[tower] then
-				local cfStr = serializeCFrame(tower:GetPivot())
-				table.insert(recordedActions, {
-					Action = "Sell",
-					Name = tower.Name,
-					CFrameStr = cfStr,
-					Timestamp = os.clock()
-				})
+				removed[tower] = data
 			end
+		end
+
+		for remTower, remData in removed do
+			for addTower, addData in added do
+				if cframeCloseEnough(remData.Pivot, addData.Pivot) and remData.Name ~= addData.Name then
+					local cfStr = serializeCFrame(addData.Pivot)
+					table.insert(recordedActions, {
+						Action = "Upgrade",
+						OldName = remData.Name,
+						NewName = addData.Name,
+						CFrameStr = cfStr,
+						Timestamp = os.clock()
+					})
+					added[addTower] = nil
+					break
+				end
+			end
+		end
+
+		for _, data in added do
+			local cfStr = serializeCFrame(data.Pivot)
+			table.insert(recordedActions, {
+				Action = "Spawn",
+				Name = data.Name,
+				CFrameStr = cfStr,
+				Timestamp = os.clock()
+			})
+		end
+
+		for _, data in removed do
+			local cfStr = serializeCFrame(data.Pivot)
+			table.insert(recordedActions, {
+				Action = "Sell",
+				Name = data.Name,
+				CFrameStr = cfStr,
+				Timestamp = os.clock()
+			})
 		end
 
 		lastTowers = current
 	end)
+end
+
+local function stopRecording()
+	if not recording then return end
+	recording = false
+	if connection then connection:Disconnect() connection = nil end
+	generateAndShowScript()
 end
 
 local function generateReplayCode()
@@ -114,12 +155,15 @@ LP.Idled:Connect(function()
 	VirtualUser:ClickButton2(Vector2.new())
 end)
 
-local function findNearestTower(name, targetCFrame)
-	local closest, minDist = nil, math.huge
+local function findNearestTower(name, targetCFrame, maxDist)
+	local closest, minDist = nil, maxDist or 3
 	for _, v in workspace.Towers:GetChildren() do
 		if v.Name == name then
 			local dist = (v:GetPivot().Position - targetCFrame.Position).Magnitude
-			if dist < minDist then minDist = dist closest = v end
+			if dist < minDist then
+				minDist = dist
+				closest = v
+			end
 		end
 	end
 	return closest
@@ -129,7 +173,14 @@ local actions = {
 ]]
 
 	for _, act in ipairs(recordedActions) do
-		code = code .. '    {Action = "' .. act.Action .. '", Name = "' .. act.Name:gsub('"', '\\"') .. '", CFrameStr = "' .. act.CFrameStr:gsub('"', '\\"') .. '", Timestamp = ' .. string.format("%.6f", act.Timestamp) .. '},\n'
+		local line = '    {Action = "' .. act.Action .. '", '
+		if act.Action == "Upgrade" then
+			line = line .. 'OldName = "' .. act.OldName:gsub('"', '\\"') .. '", NewName = "' .. act.NewName:gsub('"', '\\"') .. '", '
+		else
+			line = line .. 'Name = "' .. act.Name:gsub('"', '\\"') .. '", '
+		end
+		line = line .. 'CFrameStr = "' .. act.CFrameStr:gsub('"', '\\"') .. '", Timestamp = ' .. string.format("%.6f", act.Timestamp) .. '},\n'
+		code = code .. line
 	end
 
 	code = code .. [[
@@ -139,7 +190,7 @@ local function replay()
 	if #actions == 0 then print("No actions recorded") return end
 
 	local startClock = os.clock()
-	local baseTime = actions[1] and actions[1].Timestamp or 0
+	local baseTime = actions[1].Timestamp or 0
 
 	if _G.preciseTiming then
 		for _, act in ipairs(actions) do
@@ -150,16 +201,19 @@ local function replay()
 			end
 
 			local success, cf = pcall(loadstring, "return " .. act.CFrameStr)
-			if not success or not cf then warn("Bad CFrame: " .. act.CFrameStr) continue end
+			if not success or typeof(cf) ~= "CFrame" then warn("Invalid CFrame skipped") continue end
 
 			if act.Action == "Spawn" and act.Name then
 				SpawnTower:InvokeServer(act.Name, cf)
 			elseif act.Action == "Sell" and act.Name then
 				local tower = findNearestTower(act.Name, cf)
-				if tower then
-					SellTower:InvokeServer(tower)
+				if tower then SellTower:InvokeServer(tower) end
+			elseif act.Action == "Upgrade" and act.OldName and act.NewName then
+				local oldTower = findNearestTower(act.OldName, cf, 2)
+				if oldTower then
+					SpawnTower:InvokeServer(act.NewName, cf, oldTower)
 				else
-					warn("Sell target not found: " .. act.Name)
+					warn("Upgrade failed - old tower not found: " .. act.OldName)
 				end
 			end
 		end
@@ -167,17 +221,21 @@ local function replay()
 		for _, act in ipairs(actions) do
 			if not act.CFrameStr then continue end
 			local success, cf = pcall(loadstring, "return " .. act.CFrameStr)
-			if not success or not cf then warn("Bad CFrame") continue end
+			if not success or typeof(cf) ~= "CFrame" then continue end
 
 			if act.Action == "Spawn" and act.Name then
 				SpawnTower:InvokeServer(act.Name, cf)
 				task.wait(0.4)
 			elseif act.Action == "Sell" and act.Name then
 				local tower = findNearestTower(act.Name, cf)
-				if tower then
-					SellTower:InvokeServer(tower)
-				end
+				if tower then SellTower:InvokeServer(tower) end
 				task.wait(0.35)
+			elseif act.Action == "Upgrade" and act.OldName and act.NewName then
+				local oldTower = findNearestTower(act.OldName, cf, 2)
+				if oldTower then
+					SpawnTower:InvokeServer(act.NewName, cf, oldTower)
+				end
+				task.wait(0.4)
 			end
 		end
 	end
@@ -191,28 +249,22 @@ task.spawn(function()
 			local pg = LP.PlayerGui
 			if pg and pg:FindFirstChild("GameGui") then
 				local exit = pg.GameGui:FindFirstChild("Exit")
-				if exit and exit.Visible then
-					teleport(PLACE_MAIN)
-				end
+				if exit and exit.Visible then teleport(PLACE_MAIN) end
 			end
 		elseif id == PLACE_MAIN then
 			touchFinish()
 			equipNeededTowers()
 			task.wait(2.5)
 			tp()
-			task.delay(90, function()
-				if game.PlaceId == PLACE_MAIN then tp() end
-			end)
+			task.delay(90, function() if game.PlaceId == PLACE_MAIN then tp() end end)
 		end
 	end
 end)
 
-if game.PlaceId == MAP_PLACE_ID then
-	replay()
-end
+if game.PlaceId == MAP_PLACE_ID then replay() end
 
 print("Macro loaded | Map: " .. _G.mapname)
-	]]
+]]
 	return code
 end
 
@@ -249,7 +301,7 @@ local function generateAndShowScript()
 	local title = Instance.new("TextLabel")
 	title.Size = UDim2.new(1,0,0,45)
 	title.BackgroundTransparency = 1
-	title.Text = "MACRO GENERATED + COPIED TO CLIPBOARD!"
+	title.Text = "MACRO GENERATED (Use loadstring to load the script)"
 	title.TextColor3 = Color3.fromRGB(100,255,120)
 	title.Font = Enum.Font.GothamBold
 	title.TextSize = 22

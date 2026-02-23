@@ -135,7 +135,7 @@ local function replay()
 		for _, act in ipairs(actions) do
 			if not act.Timestamp or not act.CFrameStr then continue end
 			local targetTime = baseTime + (act.Timestamp - baseTime)
-			while os.clock() < startClock + targetTime do
+			while workspace.DistributedGameTime < startClock + targetTime do
 				RunService.Heartbeat:Wait()
 			end
 

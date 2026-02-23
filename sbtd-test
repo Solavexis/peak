@@ -83,58 +83,58 @@ local function parseCF(str)
 	return CFrame.new(n[1],n[2],n[3])
 end
 
-local towerCache = {}
+local placedTowers = {}
 
 local actions = {
-    {Action = "Spawn", Name = "Trophy", CFrameStr = "CFrame.new(-68.643997192,159.242370605,39.720848083)", Timestamp = 7},
-    {Action = "Spawn", Name = "Trophy", CFrameStr = "CFrame.new(-72.544265747,159.011474609,41.400108337)", Timestamp = 9.547235},
-    {Action = "Spawn", Name = "Trophy", CFrameStr = "CFrame.new(-71.603073120,158.948013306,38.019348145)", Timestamp = 11.64722},
-    {Action = "Upgrade", OldName = "Trophy", Name = "Winner", CFrameStr = "CFrame.new(-68.635086060,158.526168823,39.718742371)", Timestamp = 20.628952},
-    {Action = "Upgrade", OldName = "Trophy", Name = "Winner", CFrameStr = "CFrame.new(35.900020599,159.426849365,256.399993896)", Timestamp = 32.887267},
-    {Action = "Upgrade", OldName = "Winner", Name = "Award", CFrameStr = "CFrame.new(-68.628822327,158.526229858,39.721885681)", Timestamp = 67.091278},
-    {Action = "Upgrade", OldName = "Winner", Name = "Award", CFrameStr = "CFrame.new(-72.544265747,158.526824951,41.400108337)", Timestamp = 73.173211},
-    {Action = "Sell", Name = "Trophy", CFrameStr = "CFrame.new(-71.603073120,158.526824951,38.019348145)", Timestamp = 86.361665},
-    {Action = "Upgrade", OldName = "Award", Name = "Bloxy", CFrameStr = "CFrame.new(-68.628814697,158.526824951,39.721878052)", Timestamp = 96.92925},
-    {Action = "Upgrade", OldName = "Award", Name = "Bloxy", CFrameStr = "CFrame.new(-72.544265747,158.526855469,41.400108337)", Timestamp = 102.658388},
-    {Action = "Spawn", Name = "Sun", CFrameStr = "CFrame.new(-42.246223450,159.044448853,35.313236237)", Timestamp = 114.623344},
-    {Action = "Upgrade", OldName = "Sun", Name = "Solarflare", CFrameStr = "CFrame.new(-42.246223450,158.605804443,35.313236237)", Timestamp = 124.493784},
-    {Action = "Spawn", Name = "Engineer", CFrameStr = "CFrame.new(-44.508575439,159.513259888,33.568614960)", Timestamp = 129.789201},
-    {Action = "Upgrade", OldName = "Engineer",  Name = "Technician", CFrameStr = "CFrame.new(-44.509216309,158.786773682,33.568248749)", Timestamp = 131.070019},
-    {Action = "Upgrade", OldName = "Solarflare", Name = "Neutronstar", CFrameStr = "CFrame.new(-42.246223450,158.579208374,35.313236237)", Timestamp = 147.025269},
-    {Action = "Spawn", Name = "Buddy", CFrameStr = "CFrame.new(-43.011516571,159.000869751,38.076225281)", Timestamp = 155.973111},
-    {Action = "Upgrade", OldName = "Buddy", Name = "Best Buddy", CFrameStr = "CFrame.new(-43.011516571,158.613510132,38.076225281)", Timestamp = 157.209458},
-    {Action = "Spawn", Name = "Buddy", CFrameStr = "CFrame.new(-42.909595490,159.209915161,37.420425415)", Timestamp = 159.023634},
-    {Action = "Upgrade", OldName = "Buddy", Name = "Best Buddy", CFrameStr = "CFrame.new(-42.897392273,158.526855469,37.427532196)", Timestamp = 160.122844},
-    {Action = "Spawn", Name = "Buddy", CFrameStr = "CFrame.new(-42.344188690,158.885055542,37.722095490)", Timestamp = 161.956551},
-    {Action = "Upgrade", OldName = "Buddy", Name = "Best Buddy", CFrameStr = "CFrame.new(-42.344188690,158.613510132,37.722095490)", Timestamp = 163.156482},
-    {Action = "Spawn", Name = "Buddy", CFrameStr = "CFrame.new(-42.857677460,159.181167603,37.720798492)", Timestamp = 164.793714},
-    {Action = "Upgrade", OldName = "Buddy", Name = "Best Buddy", CFrameStr = "CFrame.new(-42.856605530,158.612518311,37.720031738)", Timestamp = 165.883856},
-    {Action = "Spawn", Name = "Buddy", CFrameStr = "CFrame.new(-42.393989563,159.086013794,37.658462524)", Timestamp = 167.189895},
-    {Action = "Upgrade", OldName = "Buddy", Name = "Best Buddy", CFrameStr = "CFrame.new(-42.407382965,158.612503052,37.649719238)", Timestamp = 168.343581},
-    {Action = "Spawn", Name = "Buddy", CFrameStr = "CFrame.new(-42.521705627,159.082550049,37.561332703)", Timestamp = 169.788767},
-    {Action = "Upgrade", OldName = "Buddy", Name = "Best Buddy", CFrameStr = "CFrame.new(-42.521705627,158.526855469,37.561332703)", Timestamp = 170.942363},
-    {Action = "Upgrade", OldName = "Neutronstar", Name = "Redstar", CFrameStr = "CFrame.new(-42.246223450,158.586425781,35.313236237)", Timestamp = 191.991008},
-    {Action = "Spawn", Name = "Sun", CFrameStr = "CFrame.new(-42.683181763,159.050476074,34.404029846)", Timestamp = 242.438278},
-    {Action = "Upgrade", OldName = "Sun", Name = "Solarflare", CFrameStr = "CFrame.new(-42.683181763,158.578079224,34.404029846)", Timestamp = 243.933809},
-    {Action = "Upgrade", OldName = "Solarflare", Name = "Neutronstar", CFrameStr = "CFrame.new(-42.683181763,158.578079224,34.404029846)", Timestamp = 244.983324},
-    {Action = "Upgrade", OldName = "Neutronstar", Name = "Redstar", CFrameStr = "CFrame.new(-42.683181763,158.578079224,34.404029846)", Timestamp = 246.365063},
-    {Action = "Upgrade", OldName = "Redstar", Name = "Star", CFrameStr = "CFrame.new(-42.683181763,158.708038330,34.404029846)", Timestamp = 263.18913},
-    {Action = "Spawn", Name = "Sun", CFrameStr = "CFrame.new(-41.501571655,159.219726562,36.407993317)", Timestamp = 266.362974},
-    {Action = "Upgrade", OldName = "Sun", Name = "Solarflare", CFrameStr = "CFrame.new(-41.501571655,158.605804443,36.407993317)", Timestamp = 267.881119},
-    {Action = "Upgrade", OldName = "Solarflare", Name = "Neutronstar", CFrameStr = "CFrame.new(-41.501571655,158.605804443,36.407993317)", Timestamp = 269.047745},
-    {Action = "Upgrade", OldName = "Neutronstar", Name = "Redstar", CFrameStr = "CFrame.new(-41.501571655,158.601791382,36.407993317)", Timestamp = 277.841439},
-    {Action = "Upgrade", OldName = "Redstar", Name = "Star", CFrameStr = "CFrame.new(-41.501571655,158.509552002,36.407993317)", Timestamp = 281.013284},
-    {Action = "Sell", Name = "Bloxy", CFrameStr = "CFrame.new(-68.628814697,158.526824951,39.721878052)", Timestamp = 286.445329},
-    {Action = "Sell", Name = "Bloxy", CFrameStr = "CFrame.new(-72.544265747,158.526824951,41.400108337)", Timestamp = 288.480087},
-    {Action = "Upgrade", OldName = "Star", Name = "Bluestar", CFrameStr = "CFrame.new(-42.246223450,158.975418091,35.313236237)", Timestamp = 296.826609},
-    {Action = "Upgrade", OldName = "Star", Name = "Bluestar", CFrameStr = "CFrame.new(-42.683181763,158.776596069,34.404029846)", Timestamp = 320.765683},
-    {Action = "Upgrade", OldName = "Bluestar", Name = "Nova", CFrameStr = "CFrame.new(-42.683181763,158.716445923,34.404029846)", Timestamp = 357.090845},
-    {Action = "Upgrade", OldName = "Star", Name = "Bluestar", CFrameStr = "CFrame.new(-41.501571655,158.576522827,36.407993317)", Timestamp = 368.26401},
-    {Action = "Upgrade", OldName = "Bluestar", Name = "Nova", CFrameStr = "CFrame.new(-42.246223450,158.915176392,35.313236237)", Timestamp = 384.289215},
-    {Action = "Upgrade", OldName = "Bluestar", Name = "Nova", CFrameStr = "CFrame.new(-41.501571655,158.511459351,36.407993317)", Timestamp = 399.90556},
-    {Action = "Upgrade", OldName = "Nova", Name = "Supernova", CFrameStr = "CFrame.new(-42.683181763,158.761550903,34.404029846)", Timestamp = 422.646337},
-    {Action = "Upgrade", OldName = "Nova", Name = "Supernova", CFrameStr = "CFrame.new(-42.246223450,158.902770996,35.313236237)", Timestamp = 436.941536},
-    {Action = "Upgrade", OldName = "Nova", Name = "Supernova", CFrameStr = "CFrame.new(-41.501571655,158.505844116,36.407993317)", Timestamp = 444.925394},
+    {Action = "Spawn", Name = "Trophy", Index = 1, CFrameStr = "CFrame.new(-68.643997192,159.242370605,39.720848083)", Timestamp = 7},
+    {Action = "Spawn", Name = "Trophy", Index = 2, CFrameStr = "CFrame.new(-72.544265747,159.011474609,41.400108337)", Timestamp = 9.547235},
+    {Action = "Spawn", Name = "Trophy", Index = 3, CFrameStr = "CFrame.new(-71.603073120,158.948013306,38.019348145)", Timestamp = 11.64722},
+    {Action = "Upgrade", OldName = "Trophy", Name = "Winner", Index = 1, CFrameStr = "CFrame.new(-68.635086060,158.526168823,39.718742371)", Timestamp = 20.628952},
+    {Action = "Upgrade", OldName = "Trophy", Name = "Winner", Index = 2, CFrameStr = "CFrame.new(35.900020599,159.426849365,256.399993896)", Timestamp = 32.887267},
+    {Action = "Upgrade", OldName = "Winner", Name = "Award", Index = 1, CFrameStr = "CFrame.new(-68.628822327,158.526229858,39.721885681)", Timestamp = 67.091278},
+    {Action = "Upgrade", OldName = "Winner", Name = "Award", Index = 2, CFrameStr = "CFrame.new(-72.544265747,158.526824951,41.400108337)", Timestamp = 73.173211},
+    {Action = "Sell", Name = "Trophy", Index = 3,  CFrameStr = "CFrame.new(-71.603073120,158.526824951,38.019348145)", Timestamp = 86.361665},
+    {Action = "Upgrade", OldName = "Award", Name = "Bloxy", Index = 1, CFrameStr = "CFrame.new(-68.628814697,158.526824951,39.721878052)", Timestamp = 96.92925},
+    {Action = "Upgrade", OldName = "Award", Name = "Bloxy", Index = 2, CFrameStr = "CFrame.new(-72.544265747,158.526855469,41.400108337)", Timestamp = 102.658388},
+    {Action = "Spawn", Name = "Sun", Index = 4, CFrameStr = "CFrame.new(-42.246223450,159.044448853,35.313236237)", Timestamp = 114.623344},
+    {Action = "Upgrade", OldName = "Sun", Name = "Solarflare", Index = 4, CFrameStr = "CFrame.new(-42.246223450,158.605804443,35.313236237)", Timestamp = 124.493784},
+    {Action = "Spawn", Name = "Engineer", Index = 5, CFrameStr = "CFrame.new(-44.508575439,159.513259888,33.568614960)", Timestamp = 129.789201},
+    {Action = "Upgrade", OldName = "Engineer",  Name = "Technician", Index = 5, CFrameStr = "CFrame.new(-44.509216309,158.786773682,33.568248749)", Timestamp = 131.070019},
+    {Action = "Upgrade", OldName = "Solarflare", Name = "Neutronstar", Index = 4, CFrameStr = "CFrame.new(-42.246223450,158.579208374,35.313236237)", Timestamp = 147.025269},
+    {Action = "Spawn", Name = "Buddy", Index = 6, CFrameStr = "CFrame.new(-43.011516571,159.000869751,38.076225281)", Timestamp = 155.973111},
+    {Action = "Upgrade", OldName = "Buddy", Name = "Best Buddy", Index = 6, CFrameStr = "CFrame.new(-43.011516571,158.613510132,38.076225281)", Timestamp = 157.209458},
+    {Action = "Spawn", Name = "Buddy", Index = 7, CFrameStr = "CFrame.new(-42.909595490,159.209915161,37.420425415)", Timestamp = 159.023634},
+    {Action = "Upgrade", OldName = "Buddy", Name = "Best Buddy", Index = 7, CFrameStr = "CFrame.new(-42.897392273,158.526855469,37.427532196)", Timestamp = 160.122844},
+    {Action = "Spawn", Name = "Buddy", Index = 8, CFrameStr = "CFrame.new(-42.344188690,158.885055542,37.722095490)", Timestamp = 161.956551},
+    {Action = "Upgrade", OldName = "Buddy", Name = "Best Buddy", Index = 8, CFrameStr = "CFrame.new(-42.344188690,158.613510132,37.722095490)", Timestamp = 163.156482},
+    {Action = "Spawn", Name = "Buddy", Index = 9, CFrameStr = "CFrame.new(-42.857677460,159.181167603,37.720798492)", Timestamp = 164.793714},
+    {Action = "Upgrade", OldName = "Buddy", Name = "Best Buddy", Index = 9, CFrameStr = "CFrame.new(-42.856605530,158.612518311,37.720031738)", Timestamp = 165.883856},
+    {Action = "Spawn", Name = "Buddy", Index = 10, CFrameStr = "CFrame.new(-42.393989563,159.086013794,37.658462524)", Timestamp = 167.189895},
+    {Action = "Upgrade", OldName = "Buddy", Name = "Best Buddy", Index = 10, CFrameStr = "CFrame.new(-42.407382965,158.612503052,37.649719238)", Timestamp = 168.343581},
+    {Action = "Spawn", Name = "Buddy", Index = 11, CFrameStr = "CFrame.new(-42.521705627,159.082550049,37.561332703)", Timestamp = 169.788767},
+    {Action = "Upgrade", OldName = "Buddy", Name = "Best Buddy", Index = 11, CFrameStr = "CFrame.new(-42.521705627,158.526855469,37.561332703)", Timestamp = 170.942363},
+    {Action = "Upgrade", OldName = "Neutronstar", Name = "Redstar", Index = 4, CFrameStr = "CFrame.new(-42.246223450,158.586425781,35.313236237)", Timestamp = 191.991008},
+    {Action = "Spawn", Name = "Sun", Index = 12, CFrameStr = "CFrame.new(-42.683181763,159.050476074,34.404029846)", Timestamp = 242.438278},
+    {Action = "Upgrade", OldName = "Sun", Name = "Solarflare", Index = 12, CFrameStr = "CFrame.new(-42.683181763,158.578079224,34.404029846)", Timestamp = 243.933809},
+    {Action = "Upgrade", OldName = "Solarflare", Name = "Neutronstar", Index = 12, CFrameStr = "CFrame.new(-42.683181763,158.578079224,34.404029846)", Timestamp = 244.983324},
+    {Action = "Upgrade", OldName = "Neutronstar", Name = "Redstar", Index = 12, CFrameStr = "CFrame.new(-42.683181763,158.578079224,34.404029846)", Timestamp = 246.365063},
+    {Action = "Upgrade", OldName = "Redstar", Name = "Star", Index = 12, CFrameStr = "CFrame.new(-42.683181763,158.708038330,34.404029846)", Timestamp = 263.18913},
+    {Action = "Spawn", Name = "Sun", Index = 13, CFrameStr = "CFrame.new(-41.501571655,159.219726562,36.407993317)", Timestamp = 266.362974},
+    {Action = "Upgrade", OldName = "Sun", Name = "Solarflare", Index = 13, CFrameStr = "CFrame.new(-41.501571655,158.605804443,36.407993317)", Timestamp = 267.881119},
+    {Action = "Upgrade", OldName = "Solarflare", Name = "Neutronstar", Index = 13, CFrameStr = "CFrame.new(-41.501571655,158.605804443,36.407993317)", Timestamp = 269.047745},
+    {Action = "Upgrade", OldName = "Neutronstar", Name = "Redstar", Index = 13, CFrameStr = "CFrame.new(-41.501571655,158.601791382,36.407993317)", Timestamp = 277.841439},
+    {Action = "Upgrade", OldName = "Redstar", Name = "Star", Index = 13, CFrameStr = "CFrame.new(-41.501571655,158.509552002,36.407993317)", Timestamp = 281.013284},
+    {Action = "Sell", Name = "Bloxy", Index = 1, CFrameStr = "CFrame.new(-68.628814697,158.526824951,39.721878052)", Timestamp = 286.445329},
+    {Action = "Sell", Name = "Bloxy", Index = 2, CFrameStr = "CFrame.new(-72.544265747,158.526824951,41.400108337)", Timestamp = 288.480087},
+    {Action = "Upgrade", OldName = "Star", Name = "Bluestar", Index = 4, CFrameStr = "CFrame.new(-42.246223450,158.975418091,35.313236237)", Timestamp = 296.826609},
+    {Action = "Upgrade", OldName = "Star", Name = "Bluestar", Index = 12, CFrameStr = "CFrame.new(-42.683181763,158.776596069,34.404029846)", Timestamp = 320.765683},
+    {Action = "Upgrade", OldName = "Bluestar", Name = "Nova", Index = 12, CFrameStr = "CFrame.new(-42.683181763,158.716445923,34.404029846)", Timestamp = 357.090845},
+    {Action = "Upgrade", OldName = "Star", Name = "Bluestar", Index = 13, CFrameStr = "CFrame.new(-41.501571655,158.576522827,36.407993317)", Timestamp = 368.26401},
+    {Action = "Upgrade", OldName = "Bluestar", Name = "Nova", Index = 4, CFrameStr = "CFrame.new(-42.246223450,158.915176392,35.313236237)", Timestamp = 384.289215},
+    {Action = "Upgrade", OldName = "Bluestar", Name = "Nova", Index = 13, CFrameStr = "CFrame.new(-41.501571655,158.511459351,36.407993317)", Timestamp = 399.90556},
+    {Action = "Upgrade", OldName = "Nova", Name = "Supernova", Index = 12, CFrameStr = "CFrame.new(-42.683181763,158.761550903,34.404029846)", Timestamp = 422.646337},
+    {Action = "Upgrade", OldName = "Nova", Name = "Supernova", Index = 4, CFrameStr = "CFrame.new(-42.246223450,158.902770996,35.313236237)", Timestamp = 436.941536},
+    {Action = "Upgrade", OldName = "Nova", Name = "Supernova", Index = 13, CFrameStr = "CFrame.new(-41.501571655,158.505844116,36.407993317)", Timestamp = 444.925394},
 }
 
 local function replay()
@@ -142,7 +142,7 @@ local function replay()
 	local shift = 7 - actions[1].Timestamp
 	local start = workspace.DistributedGameTime
 
-    for _, a in ipairs(actions) do
+	for _, a in ipairs(actions) do
 		local target = start + a.Timestamp + shift
 		while workspace.DistributedGameTime < target do
 			RunService.Heartbeat:Wait()
@@ -153,30 +153,30 @@ local function replay()
 
 		local key = tostring(cf.Position)
 		if a.Action == "Spawn" then
-			SpawnTower:InvokeServer(a.Name, cf)
-			task.wait(0.25)
-			local tower = findNearestTower(a.Name, cf)
-			if tower then
-				towerCache[key] = tower
-			end
-		elseif a.Action == "Sell" then
-			local tower = towerCache[key] or findNearestTower(a.Name, cf)
-			if tower then
-				SellTower:InvokeServer(tower)
-				towerCache[key] = nil
-			end
-		elseif a.Action == "Upgrade" then
-            local old = findNearestTower(a.OldName, cf)
-            if old then
-                SpawnTower:InvokeServer(a.Name, cf, old)
+        	SpawnTower:InvokeServer(a.Name, cf)
+        	task.wait(0.25)
+        	local tower = findNearestTower(a.Name, cf)
+        	if tower then
+	        	placedTowers[a.Index] = tower
+        	end
 
-                task.wait(0.3)
+        elseif a.Action == "Sell" then
+        	local tower = placedTowers[a.Index]
+        	if tower then
+		        SellTower:InvokeServer(tower)
+        		placedTowers[a.Index] = nil
+        	end
 
-                local newTower = findNearestTower(a.Name, cf)
-                if newTower then
-                    towerCache[key] = newTower
-                end
-            end
+        elseif a.Action == "Upgrade" then
+        	local old = placedTowers[a.Index]
+        	if old then
+		        SpawnTower:InvokeServer(a.Name, cf, old)
+	        	task.wait(0.3)
+	        	local newTower = findNearestTower(a.Name, cf)
+	        	if newTower then
+		        	placedTowers[a.Index] = newTower
+	        	end
+        	end
         end
 	end
 end

@@ -128,7 +128,7 @@ local actions = {
 local function replay()
 	if #actions == 0 then print("No actions recorded") return end
 
-	local startClock = workspace.DistributedTime
+	local startClock = workspace.DistributedGameTime
 	local baseTime = actions[1].Timestamp or 0
 
 	if _G.preciseTiming then

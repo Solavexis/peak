@@ -1,0 +1,379 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local VirtualUser = game:GetService("VirtualUser")
+local LP = Players.LocalPlayer
+
+local Functions = ReplicatedStorage:WaitForChild("Functions")
+local SpawnTower = Functions:WaitForChild("SpawnTower")
+local SellTower = Functions:WaitForChild("SellTower")
+
+local recording = false
+local recordedActions = {}
+local connection
+local lastTowers = {}
+
+local function serializeCFrame(cf)
+	local x,y,z,r00,r01,r02,r10,r11,r12,r20,r21,r22 = cf:GetComponents()
+	return string.format("CFrame.new(%.4f,%.4f,%.4f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f)", x,y,z,r00,r01,r02,r10,r11,r12,r20,r21,r22)
+end
+
+local function startRecording()
+	if recording then return end
+	recording = true
+	recordedActions = {}
+	lastTowers = {}
+
+	for _, t in workspace.Towers:GetChildren() do
+		lastTowers[t] = true
+	end
+
+	connection = RunService.Heartbeat:Connect(function()
+		if not recording then return end
+
+		local current = {}
+		for _, t in workspace.Towers:GetChildren() do
+			current[t] = true
+			if not lastTowers[t] then
+				local cfStr = serializeCFrame(t:GetPivot())
+				table.insert(recordedActions, {
+					Action = "Spawn",
+					Name = t.Name,
+					CFrameStr = cfStr,
+					Timestamp = os.clock()
+				})
+			end
+		end
+
+		for tower in lastTowers do
+			if not current[tower] then
+				local cfStr = serializeCFrame(tower:GetPivot())
+				table.insert(recordedActions, {
+					Action = "Sell",
+					Name = tower.Name,
+					CFrameStr = cfStr,
+					Timestamp = os.clock()
+				})
+			end
+		end
+
+		lastTowers = current
+	end)
+end
+
+local function generateReplayCode()
+	local code = [[
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local VirtualUser = game:GetService("VirtualUser")
+local LP = Players.LocalPlayer
+
+local Functions = ReplicatedStorage:WaitForChild("Functions")
+local SpawnTower = Functions:WaitForChild("SpawnTower")
+local SellTower = Functions:WaitForChild("SellTower")
+
+local PLACE_MAIN = 93249115521759
+local MAP_PLACE_ID = ]] game.PlaceId [[
+
+_G.mapname = "Desert" -- map name 
+_G.needtower = "Sun, Trophy, Engineer" -- tower needed
+_G.preciseTiming = true -- don't change if you don't know what are you doing
+
+local function equipNeededTowers()
+	local pg = LP:WaitForChild("PlayerGui", 5)
+	if not pg then return end
+	local shop = pg:WaitForChild("ShopGui", 5)
+	if not shop then return end
+	local inv = shop:WaitForChild("Inventory", 5)
+	if not inv then return end
+	for _, item in string.split(_G.needtower, ",") do
+		local trimmed = item:match("^%s*(.-)%s*$")
+		if trimmed ~= "" and not inv:FindFirstChild(trimmed) then
+			ReplicatedStorage:WaitForChild("InteractItem"):InvokeServer(trimmed)
+			task.wait(0.4)
+		end
+	end
+end
+
+local function touchFinish()
+	local obby = workspace:FindFirstChild("Obby")
+	if not obby then return end
+	local finish = obby:FindFirstChild("Finish")
+	if not finish then return end
+	local hrp = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+	firetouchinterest(hrp, finish, 0) task.wait() firetouchinterest(hrp, finish, 1)
+end
+
+local function teleport(id)
+	if game.PlaceId ~= id then game:GetService("TeleportService"):Teleport(id, LP) end
+end
+
+local function tp()
+	ReplicatedStorage.Party.Teleport:InvokeServer(_G.mapname, true)
+end
+
+LP.Idled:Connect(function()
+	VirtualUser:CaptureController()
+	VirtualUser:ClickButton2(Vector2.new())
+end)
+
+local function findNearestTower(name, targetCFrame)
+	local closest, minDist = nil, math.huge
+	for _, v in workspace.Towers:GetChildren() do
+		if v.Name == name then
+			local dist = (v:GetPivot().Position - targetCFrame.Position).Magnitude
+			if dist < minDist then
+				minDist = dist
+				closest = v
+			end
+		end
+	end
+	return closest
+end
+
+local actions = {
+]]
+
+	for _, act in ipairs(recordedActions) do
+		code = code .. '    {Action = "' .. act.Action .. '", Name = "' .. act.Name:gsub('"', '\\"') .. '", CFrameStr = "' .. act.CFrameStr:gsub('"', '\\"') .. '", Timestamp = ' .. act.Timestamp .. '},\n'
+	end
+
+	code = code .. [[
+}
+
+local function replay()
+	local startClock = os.clock()
+	if _G.preciseTiming then
+		local baseTime = actions[1] and actions[1].Timestamp or 0
+		for _, act in ipairs(actions) do
+			local targetTime = baseTime + (act.Timestamp - baseTime)
+			while os.clock() < startClock + targetTime do
+				RunService.Heartbeat:Wait()
+			end
+
+			local cf = loadstring("return " .. act.CFrameStr)()
+			if act.Action == "Spawn" then
+				SpawnTower:InvokeServer(act.Name, cf)
+			elseif act.Action == "Sell" then
+				local tower = findNearestTower(act.Name, cf)
+				if tower then
+					SellTower:InvokeServer(tower)
+				end
+			end
+		end
+	else
+		for _, act in ipairs(actions) do
+			local cf = loadstring("return " .. act.CFrameStr)()
+			if act.Action == "Spawn" then
+				SpawnTower:InvokeServer(act.Name, cf)
+				task.wait(0.4)
+			elseif act.Action == "Sell" then
+				local tower = findNearestTower(act.Name, cf)
+				if tower then
+					SellTower:InvokeServer(tower)
+				end
+				task.wait(0.35)
+			end
+		end
+	end
+	print("Replay completed!")
+end
+
+task.spawn(function()
+	while task.wait(2) do
+		local id = game.PlaceId
+		if id == MAP_PLACE_ID then
+			local pg = LP.PlayerGui
+			if pg and pg:FindFirstChild("GameGui") then
+				local exit = pg.GameGui:FindFirstChild("Exit")
+				if exit and exit.Visible then
+					teleport(PLACE_MAIN)
+				end
+			end
+		elseif id == PLACE_MAIN then
+			touchFinish()
+			equipNeededTowers()
+			task.wait(2.5)
+			tp()
+			task.delay(90, function()
+				if game.PlaceId == PLACE_MAIN then tp() end
+			end)
+		end
+	end
+end)
+
+if game.PlaceId == MAP_PLACE_ID then
+	replay()
+end
+
+print("Macro loaded | Map: " .. _G.mapname)
+	]]
+	return code
+end
+
+local function generateAndShowScript()
+	local fullCode = generateReplayCode()
+	setclipboard(fullCode)
+
+	local sg = Instance.new("ScreenGui")
+	sg.Name = "MacroResult"
+	sg.Parent = game:GetService("CoreGui")
+
+	local f = Instance.new("Frame")
+	f.Size = UDim2.new(0.65,0,0.75,0)
+	f.Position = UDim2.new(0.175,0,0.125,0)
+	f.BackgroundColor3 = Color3.fromRGB(20,20,25)
+	f.BorderSizePixel = 0
+	f.Parent = sg
+	Instance.new("UICorner", f).CornerRadius = UDim.new(0,10)
+
+	local title = Instance.new("TextLabel")
+	title.Size = UDim2.new(1,0,0,45)
+	title.BackgroundTransparency = 1
+	title.Text = "MACRO GENERATED + COPIED TO CLIPBOARD!"
+	title.TextColor3 = Color3.fromRGB(100,255,120)
+	title.Font = Enum.Font.GothamBold
+	title.TextSize = 22
+	title.Parent = f
+
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Size = UDim2.new(1,-20,1,-110)
+	scroll.Position = UDim2.new(0,10,0,55)
+	scroll.BackgroundColor3 = Color3.fromRGB(10,10,15)
+	scroll.ScrollBarThickness = 6
+	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	scroll.Parent = f
+
+	local box = Instance.new("TextBox")
+	box.Size = UDim2.new(1,-10,0,0)
+	box.AutomaticSize = Enum.AutomaticSize.Y
+	box.Position = UDim2.new(0,5,0,5)
+	box.BackgroundTransparency = 1
+	box.Text = fullCode
+	box.TextColor3 = Color3.fromRGB(200,255,200)
+	box.Font = Enum.Font.Code
+	box.TextSize = 13
+	box.TextXAlignment = Enum.TextXAlignment.Left
+	box.TextYAlignment = Enum.TextYAlignment.Top
+	box.TextWrapped = true
+	box.ClearTextOnFocus = false
+	box.TextEditable = false
+	box.MultiLine = true
+	box.Parent = scroll
+
+	local copy = Instance.new("TextButton")
+	copy.Size = UDim2.new(0,160,0,45)
+	copy.Position = UDim2.new(0.02,0,1,-55)
+	copy.BackgroundColor3 = Color3.fromRGB(0,140,255)
+	copy.Text = "COPY AGAIN"
+	copy.TextColor3 = Color3.new(1,1,1)
+	copy.Font = Enum.Font.GothamBold
+	copy.TextSize = 16
+	copy.Parent = f
+	copy.MouseButton1Click:Connect(function() setclipboard(fullCode) end)
+
+	local close = Instance.new("TextButton")
+	close.Size = UDim2.new(0,120,0,45)
+	close.Position = UDim2.new(0.98,-140,1,-55)
+	close.BackgroundColor3 = Color3.fromRGB(220,50,50)
+	close.Text = "CLOSE"
+	close.TextColor3 = Color3.new(1,1,1)
+	close.Font = Enum.Font.GothamBold
+	close.TextSize = 16
+	close.Parent = f
+	close.MouseButton1Click:Connect(function() sg:Destroy() end)
+
+	for _,b in {copy,close} do
+		Instance.new("UICorner", b).CornerRadius = UDim.new(0,8)
+	end
+end
+
+local function stopRecording()
+	if not recording then return end
+	recording = false
+	if connection then
+		connection:Disconnect()
+		connection = nil
+	end
+	generateAndShowScript()
+end
+
+local screen = Instance.new("ScreenGui")
+screen.Name = "MacroRecorder"
+screen.ResetOnSpawn = false
+screen.Parent = game:GetService("CoreGui")
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0,260,0,160)
+frame.Position = UDim2.new(1,-270,0,15)
+frame.BackgroundColor3 = Color3.fromRGB(35,35,40)
+frame.BorderSizePixel = 0
+frame.Parent = screen
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0,10)
+
+local lbl = Instance.new("TextLabel")
+lbl.Size = UDim2.new(1,0,0,40)
+lbl.BackgroundTransparency = 1
+lbl.Text = "MACRO RECORDER"
+lbl.TextColor3 = Color3.fromRGB(255,220,80)
+lbl.Font = Enum.Font.GothamBlack
+lbl.TextSize = 17
+lbl.Parent = frame
+
+local startBtn = Instance.new("TextButton")
+startBtn.Size = UDim2.new(0.45,0,0,50)
+startBtn.Position = UDim2.new(0.05,0,0.35,0)
+startBtn.BackgroundColor3 = Color3.fromRGB(0,200,60)
+startBtn.Text = "START RECORD"
+startBtn.TextColor3 = Color3.new(1,1,1)
+startBtn.Font = Enum.Font.GothamBold
+startBtn.TextSize = 15
+startBtn.Parent = frame
+
+local stopBtn = Instance.new("TextButton")
+stopBtn.Size = UDim2.new(0.45,0,0,50)
+stopBtn.Position = UDim2.new(0.5,0,0.35,0)
+stopBtn.BackgroundColor3 = Color3.fromRGB(200,40,40)
+stopBtn.Text = "STOP + GEN"
+stopBtn.TextColor3 = Color3.new(1,1,1)
+stopBtn.Font = Enum.Font.GothamBold
+stopBtn.TextSize = 15
+stopBtn.Parent = frame
+
+local status = Instance.new("TextLabel")
+status.Size = UDim2.new(1,0,0,30)
+status.Position = UDim2.new(0,0,0.78,0)
+status.BackgroundTransparency = 1
+status.Text = "Ready"
+status.TextColor3 = Color3.fromRGB(180,180,180)
+status.Font = Enum.Font.Gotham
+status.TextSize = 14
+status.Parent = frame
+
+for _,b in {startBtn, stopBtn} do
+	Instance.new("UICorner", b).CornerRadius = UDim.new(0,8)
+end
+
+startBtn.MouseButton1Click:Connect(function()
+	if recording then return end
+	startBtn.Text = "RECORDING..."
+	startBtn.BackgroundColor3 = Color3.fromRGB(180,0,0)
+	startRecording()
+	status.Text = "RECORDING ACTIVE"
+	status.TextColor3 = Color3.fromRGB(255,90,90)
+end)
+
+stopBtn.MouseButton1Click:Connect(function()
+	if not recording then return end
+	stopBtn.Text = "GENERATING..."
+	stopBtn.BackgroundColor3 = Color3.fromRGB(100,100,100)
+	stopRecording()
+	startBtn.Text = "START RECORD"
+	startBtn.BackgroundColor3 = Color3.fromRGB(0,200,60)
+	stopBtn.Text = "STOP + GEN"
+	stopBtn.BackgroundColor3 = Color3.fromRGB(200,40,40)
+	status.Text = "Done - Check clipboard + GUI"
+	status.TextColor3 = Color3.fromRGB(100,255,140)
+end)

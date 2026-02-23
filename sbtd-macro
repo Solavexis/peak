@@ -24,7 +24,7 @@ local UPGRADE_DISTANCE_TOLERANCE = 0.001
 
 local function serializeCFrame(cf)
 	local x,y,z = cf:GetComponents()
-	return string.format("CFrame.new(%.9f,%.9f,%.9f)", x,y,z
+	return string.format("CFrame.new(%.9f,%.9f,%.9f)", x,y,z)
 end
 
 local function cframeCloseEnough(a, b)

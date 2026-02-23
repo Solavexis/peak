@@ -15,7 +15,7 @@ local lastTowers = {}
 
 local function serializeCFrame(cf)
 	local x,y,z,r00,r01,r02,r10,r11,r12,r20,r21,r22 = cf:GetComponents()
-	return string.format("CFrame.new(%.4f,%.4f,%.4f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f)", x,y,z,r00,r01,r02,r10,r11,r12,r20,r21,r22)
+	return string.format("CFrame.new(%.9f,%.9f,%.9f,%.12f,%.12f,%.12f,%.12f,%.12f,%.12f,%.12f,%.12f,%.12f)", x,y,z,r00,r01,r02,r10,r11,r12,r20,r21,r22)
 end
 
 local function startRecording()
@@ -45,7 +45,7 @@ local function startRecording()
 			end
 		end
 
-		for tower in lastTowers do
+		for tower,_ in lastTowers do
 			if not current[tower] then
 				local cfStr = serializeCFrame(tower:GetPivot())
 				table.insert(recordedActions, {
@@ -74,19 +74,16 @@ local SpawnTower = Functions:WaitForChild("SpawnTower")
 local SellTower = Functions:WaitForChild("SellTower")
 
 local PLACE_MAIN = 93249115521759
-local MAP_PLACE_ID = ]] game.PlaceId [[
+local MAP_PLACE_ID = ]] .. game.PlaceId .. [[
 
-_G.mapname = "Desert" -- map name 
+_G.mapname = "Desert" -- map name
 _G.needtower = "Sun, Trophy, Engineer" -- tower needed
-_G.preciseTiming = true -- don't change if you don't know what are you doing
+_G.preciseTiming = true -- don't change if you don't know what you're doing
 
 local function equipNeededTowers()
-	local pg = LP:WaitForChild("PlayerGui", 5)
-	if not pg then return end
-	local shop = pg:WaitForChild("ShopGui", 5)
-	if not shop then return end
-	local inv = shop:WaitForChild("Inventory", 5)
-	if not inv then return end
+	local pg = LP:WaitForChild("PlayerGui", 5) if not pg then return end
+	local shop = pg:WaitForChild("ShopGui", 5) if not shop then return end
+	local inv = shop:WaitForChild("Inventory", 5) if not inv then return end
 	for _, item in string.split(_G.needtower, ",") do
 		local trimmed = item:match("^%s*(.-)%s*$")
 		if trimmed ~= "" and not inv:FindFirstChild(trimmed) then
@@ -97,10 +94,8 @@ local function equipNeededTowers()
 end
 
 local function touchFinish()
-	local obby = workspace:FindFirstChild("Obby")
-	if not obby then return end
-	local finish = obby:FindFirstChild("Finish")
-	if not finish then return end
+	local obby = workspace:FindFirstChild("Obby") if not obby then return end
+	local finish = obby:FindFirstChild("Finish") if not finish then return end
 	local hrp = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
 	if not hrp then return end
 	firetouchinterest(hrp, finish, 0) task.wait() firetouchinterest(hrp, finish, 1)
@@ -124,10 +119,7 @@ local function findNearestTower(name, targetCFrame)
 	for _, v in workspace.Towers:GetChildren() do
 		if v.Name == name then
 			local dist = (v:GetPivot().Position - targetCFrame.Position).Magnitude
-			if dist < minDist then
-				minDist = dist
-				closest = v
-			end
+			if dist < minDist then minDist = dist closest = v end
 		end
 	end
 	return closest
@@ -137,39 +129,50 @@ local actions = {
 ]]
 
 	for _, act in ipairs(recordedActions) do
-		code = code .. '    {Action = "' .. act.Action .. '", Name = "' .. act.Name:gsub('"', '\\"') .. '", CFrameStr = "' .. act.CFrameStr:gsub('"', '\\"') .. '", Timestamp = ' .. act.Timestamp .. '},\n'
+		code = code .. '    {Action = "' .. act.Action .. '", Name = "' .. act.Name:gsub('"', '\\"') .. '", CFrameStr = "' .. act.CFrameStr:gsub('"', '\\"') .. '", Timestamp = ' .. string.format("%.6f", act.Timestamp) .. '},\n'
 	end
 
 	code = code .. [[
 }
 
 local function replay()
+	if #actions == 0 then print("No actions recorded") return end
+
 	local startClock = os.clock()
+	local baseTime = actions[1] and actions[1].Timestamp or 0
+
 	if _G.preciseTiming then
-		local baseTime = actions[1] and actions[1].Timestamp or 0
 		for _, act in ipairs(actions) do
+			if not act.Timestamp or not act.CFrameStr then continue end
 			local targetTime = baseTime + (act.Timestamp - baseTime)
 			while os.clock() < startClock + targetTime do
 				RunService.Heartbeat:Wait()
 			end
 
-			local cf = loadstring("return " .. act.CFrameStr)()
-			if act.Action == "Spawn" then
+			local success, cf = pcall(loadstring, "return " .. act.CFrameStr)
+			if not success or not cf then warn("Bad CFrame: " .. act.CFrameStr) continue end
+
+			if act.Action == "Spawn" and act.Name then
 				SpawnTower:InvokeServer(act.Name, cf)
-			elseif act.Action == "Sell" then
+			elseif act.Action == "Sell" and act.Name then
 				local tower = findNearestTower(act.Name, cf)
 				if tower then
 					SellTower:InvokeServer(tower)
+				else
+					warn("Sell target not found: " .. act.Name)
 				end
 			end
 		end
 	else
 		for _, act in ipairs(actions) do
-			local cf = loadstring("return " .. act.CFrameStr)()
-			if act.Action == "Spawn" then
+			if not act.CFrameStr then continue end
+			local success, cf = pcall(loadstring, "return " .. act.CFrameStr)
+			if not success or not cf then warn("Bad CFrame") continue end
+
+			if act.Action == "Spawn" and act.Name then
 				SpawnTower:InvokeServer(act.Name, cf)
 				task.wait(0.4)
-			elseif act.Action == "Sell" then
+			elseif act.Action == "Sell" and act.Name then
 				local tower = findNearestTower(act.Name, cf)
 				if tower then
 					SellTower:InvokeServer(tower)
@@ -213,6 +216,20 @@ print("Macro loaded | Map: " .. _G.mapname)
 	return code
 end
 
+local function copyActionsOnly()
+	if #recordedActions == 0 then
+		setclipboard("-- No actions recorded yet")
+		return
+	end
+
+	local tbl = "local actions = {\n"
+	for _, act in ipairs(recordedActions) do
+		tbl = tbl .. '    {Action = "' .. act.Action .. '", Name = "' .. act.Name:gsub('"', '\\"') .. '", CFrameStr = "' .. act.CFrameStr:gsub('"', '\\"') .. '", Timestamp = ' .. string.format("%.6f", act.Timestamp) .. '},\n'
+	end
+	tbl = tbl .. "}\n\nprint('Actions table copied!')"
+	setclipboard(tbl)
+end
+
 local function generateAndShowScript()
 	local fullCode = generateReplayCode()
 	setclipboard(fullCode)
@@ -239,7 +256,7 @@ local function generateAndShowScript()
 	title.Parent = f
 
 	local scroll = Instance.new("ScrollingFrame")
-	scroll.Size = UDim2.new(1,-20,1,-110)
+	scroll.Size = UDim2.new(1,-20,1,-150)
 	scroll.Position = UDim2.new(0,10,0,55)
 	scroll.BackgroundColor3 = Color3.fromRGB(10,10,15)
 	scroll.ScrollBarThickness = 6
@@ -263,20 +280,31 @@ local function generateAndShowScript()
 	box.MultiLine = true
 	box.Parent = scroll
 
-	local copy = Instance.new("TextButton")
-	copy.Size = UDim2.new(0,160,0,45)
-	copy.Position = UDim2.new(0.02,0,1,-55)
-	copy.BackgroundColor3 = Color3.fromRGB(0,140,255)
-	copy.Text = "COPY AGAIN"
-	copy.TextColor3 = Color3.new(1,1,1)
-	copy.Font = Enum.Font.GothamBold
-	copy.TextSize = 16
-	copy.Parent = f
-	copy.MouseButton1Click:Connect(function() setclipboard(fullCode) end)
+	local copyFull = Instance.new("TextButton")
+	copyFull.Size = UDim2.new(0,160,0,45)
+	copyFull.Position = UDim2.new(0.02,0,1,-100)
+	copyFull.BackgroundColor3 = Color3.fromRGB(0,140,255)
+	copyFull.Text = "COPY FULL SCRIPT"
+	copyFull.TextColor3 = Color3.new(1,1,1)
+	copyFull.Font = Enum.Font.GothamBold
+	copyFull.TextSize = 16
+	copyFull.Parent = f
+	copyFull.MouseButton1Click:Connect(function() setclipboard(fullCode) end)
+
+	local copyActionsBtn = Instance.new("TextButton")
+	copyActionsBtn.Size = UDim2.new(0,180,0,45)
+	copyActionsBtn.Position = UDim2.new(0.25,0,1,-100)
+	copyActionsBtn.BackgroundColor3 = Color3.fromRGB(255,140,0)
+	copyActionsBtn.Text = "COPY ACTIONS ONLY"
+	copyActionsBtn.TextColor3 = Color3.new(1,1,1)
+	copyActionsBtn.Font = Enum.Font.GothamBold
+	copyActionsBtn.TextSize = 16
+	copyActionsBtn.Parent = f
+	copyActionsBtn.MouseButton1Click:Connect(copyActionsOnly)
 
 	local close = Instance.new("TextButton")
 	close.Size = UDim2.new(0,120,0,45)
-	close.Position = UDim2.new(0.98,-140,1,-55)
+	close.Position = UDim2.new(0.98,-140,1,-100)
 	close.BackgroundColor3 = Color3.fromRGB(220,50,50)
 	close.Text = "CLOSE"
 	close.TextColor3 = Color3.new(1,1,1)
@@ -285,7 +313,7 @@ local function generateAndShowScript()
 	close.Parent = f
 	close.MouseButton1Click:Connect(function() sg:Destroy() end)
 
-	for _,b in {copy,close} do
+	for _,b in {copyFull, copyActionsBtn, close} do
 		Instance.new("UICorner", b).CornerRadius = UDim.new(0,8)
 	end
 end
@@ -293,10 +321,7 @@ end
 local function stopRecording()
 	if not recording then return end
 	recording = false
-	if connection then
-		connection:Disconnect()
-		connection = nil
-	end
+	if connection then connection:Disconnect() connection = nil end
 	generateAndShowScript()
 end
 

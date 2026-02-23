@@ -83,6 +83,8 @@ local function parseCF(str)
 	return CFrame.new(n[1],n[2],n[3])
 end
 
+local towerCache = {}
+
 local actions = {
     {Action = "Spawn", Name = "Trophy", CFrameStr = "CFrame.new(-68.643997192,159.242370605,39.720848083)", Timestamp = 7},
     {Action = "Spawn", Name = "Trophy", CFrameStr = "CFrame.new(-72.544265747,159.011474609,41.400108337)", Timestamp = 9.547235},
@@ -136,24 +138,43 @@ local actions = {
 }
 
 local function replay()
-	if #actions==0 then return end
+	if #actions == 0 then return end
 	local shift = 7 - actions[1].Timestamp
 	local start = workspace.DistributedGameTime
-	for _,a in ipairs(actions) do
+
+    for _, a in ipairs(actions) do
 		local target = start + a.Timestamp + shift
 		while workspace.DistributedGameTime < target do
 			RunService.Heartbeat:Wait()
 		end
+
 		local cf = parseCF(a.CFrameStr)
 		if not cf then continue end
-		if a.Action=="Spawn" then
-			SpawnTower:InvokeServer(a.Name,cf)
-		elseif a.Action=="Sell" then
-			local t = findNearestTower(a.Name,cf)
-			if t then SellTower:InvokeServer(t) end
-		elseif a.Action=="Upgrade" then
-			local old = findNearestTower(a.OldName,cf)
-			if old then SpawnTower:InvokeServer(a.Name,cf,old) end
+
+		local key = tostring(cf.Position)
+		if a.Action == "Spawn" then
+			SpawnTower:InvokeServer(a.Name, cf)
+			task.wait(0.25)
+			local tower = findNearestTower(a.Name, cf)
+			if tower then
+				towerCache[key] = tower
+			end
+		elseif a.Action == "Sell" then
+			local tower = towerCache[key] or findNearestTower(a.Name, cf)
+			if tower then
+				SellTower:InvokeServer(tower)
+				towerCache[key] = nil
+			end
+		elseif a.Action == "Upgrade" then
+			local tower = towerCache[key] or findNearestTower(a.OldName, cf)
+			if tower then
+				SpawnTower:InvokeServer(a.Name, cf, tower)
+				task.wait(0.2)
+				local newTower = findNearestTower(a.Name, cf)
+				if newTower then
+					towerCache[key] = newTower
+				end
+			end
 		end
 	end
 end

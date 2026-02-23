@@ -67,7 +67,7 @@ local function startRecording()
 						OldName = remData.Name,
 						NewName = addData.Name,
 						CFrameStr = cfStr,
-						Timestamp = workspace.DistributedTime
+						Timestamp = workspace.DistributedGameTime
 					})
 					added[addTower] = nil
 					break
@@ -81,7 +81,7 @@ local function startRecording()
 				Action = "Spawn",
 				Name = data.Name,
 				CFrameStr = cfStr,
-				Timestamp = workspace.DistributedTime
+				Timestamp = workspace.DistributedGameTime
 			})
 		end
 
@@ -91,7 +91,7 @@ local function startRecording()
 				Action = "Sell",
 				Name = data.Name,
 				CFrameStr = cfStr,
-				Timestamp = workspace.DistributedTime
+				Timestamp = workspace.DistributedGameTime
 			})
 		end
 
@@ -206,7 +206,7 @@ local actions = {
 local function replay()
 	if #actions == 0 then print("No actions recorded") return end
 
-	local startClock = workspace.DistributedTime
+	local startClock = workspace.DistributedGameTime
 	local baseTime = actions[1].Timestamp or 0
 
 	if _G.preciseTiming then

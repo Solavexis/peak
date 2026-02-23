@@ -166,16 +166,18 @@ local function replay()
 				towerCache[key] = nil
 			end
 		elseif a.Action == "Upgrade" then
-			local tower = towerCache[key] or findNearestTower(a.OldName, cf)
-			if tower then
-				SpawnTower:InvokeServer(a.Name, cf, tower)
-				task.wait(0.2)
-				local newTower = findNearestTower(a.Name, cf)
-				if newTower then
-					towerCache[key] = newTower
-				end
-			end
-		end
+            local old = findNearestTower(a.OldName, cf)
+            if old then
+                SpawnTower:InvokeServer(a.Name, cf, old)
+
+                task.wait(0.3)
+
+                local newTower = findNearestTower(a.Name, cf)
+                if newTower then
+                    towerCache[key] = newTower
+                end
+            end
+        end
 	end
 end
 

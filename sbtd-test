@@ -119,7 +119,7 @@ local actions = {
     {Action = "Upgrade", Index = 5, Name = "Redstar", CFrameStr = "CFrame.new(-41.531257629,158.591339111,35.160015106)", Timestamp = 214.054179},
     {Action = "Spawn", Index = 12, Name = "Sun", CFrameStr = "CFrame.new(-43.551322937,159.023788452,34.280860901)", Timestamp = 232.645846},
     {Action = "Upgrade", Index = 12, Name = "Solarflare", CFrameStr = "CFrame.new(-43.551322937,158.804504395,34.280860901)", Timestamp = 234.004180},
-    {Action = UpgradeSpawn", Index = 12, Name = "Neutronstar", CFrameStr = "CFrame.new(-43.551322937,158.804504395,34.280860901)", Timestamp = 234.833346},
+    {Action = "Upgrade", Index = 12, Name = "Neutronstar", CFrameStr = "CFrame.new(-43.551322937,158.804504395,34.280860901)", Timestamp = 234.833346},
     {Action = "Upgrade", Index = 12, Name = "Redstar", CFrameStr = "CFrame.new(-43.551322937,158.804504395,34.280860901)", Timestamp = 236.395847},
     {Action = "Spawn", Index = 13, Name = "Sun", CFrameStr = "CFrame.new(-45.739570618,159.371276855,32.996841431)", Timestamp = 245.616680},
     {Action = "Upgrade", Index = 13, Name = "Solarflare", CFrameStr = "CFrame.new(-45.739570618,159.003204346,32.996841431)", Timestamp = 247.283347},

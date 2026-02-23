@@ -31,11 +31,16 @@ local function cframeCloseEnough(a, b)
 	return (a.Position - b.Position).Magnitude <= UPGRADE_DISTANCE_TOLERANCE
 end
 
+local towerIndexMap = {}
+local nextIndex = 1
+
 local function startRecording()
 	if recording then return end
 	recording = true
 	recordedActions = {}
 	lastTowers = {}
+	towerIndexMap = {}
+	nextIndex = 1
 
 	for _, t in workspace.Towers:GetChildren() do
 		lastTowers[t] = {Name = t.Name, Pivot = t:GetPivot()}
@@ -64,49 +69,62 @@ local function startRecording()
 		for remTower, remData in removed do
 			for addTower, addData in added do
 				if cframeCloseEnough(remData.Pivot, addData.Pivot) and remData.Name ~= addData.Name then
-					local cfStr = serializeCFrame(addData.Pivot)
+					
+					local index = towerIndexMap[remTower]
+					if not index then
+						index = nextIndex
+						nextIndex += 1
+					end
+
+					towerIndexMap[addTower] = index
+					towerIndexMap[remTower] = nil
+
 					table.insert(recordedActions, {
 						Action = "Upgrade",
+						Index = index,
 						OldName = remData.Name,
-						NewName = addData.Name,
-						CFrameStr = cfStr,
+						Name = addData.Name,
+						CFrameStr = serializeCFrame(addData.Pivot),
 						Timestamp = workspace.DistributedGameTime
 					})
+
 					added[addTower] = nil
+					removed[remTower] = nil
 					break
 				end
 			end
 		end
 
-		for _, data in added do
-			local cfStr = serializeCFrame(data.Pivot)
+		for tower, data in added do
+			local index = nextIndex
+			nextIndex += 1
+			towerIndexMap[tower] = index
+
 			table.insert(recordedActions, {
 				Action = "Spawn",
+				Index = index,
 				Name = data.Name,
-				CFrameStr = cfStr,
+				CFrameStr = serializeCFrame(data.Pivot),
 				Timestamp = workspace.DistributedGameTime
 			})
 		end
 
-		for _, data in removed do
-			local cfStr = serializeCFrame(data.Pivot)
-			table.insert(recordedActions, {
-				Action = "Sell",
-				Name = data.Name,
-				CFrameStr = cfStr,
-				Timestamp = workspace.DistributedGameTime
-			})
+		for tower, data in removed do
+			local index = towerIndexMap[tower]
+			if index then
+				table.insert(recordedActions, {
+					Action = "Sell",
+					Index = index,
+					Name = data.Name,
+					CFrameStr = serializeCFrame(data.Pivot),
+					Timestamp = workspace.DistributedGameTime
+				})
+				towerIndexMap[tower] = nil
+			end
 		end
 
 		lastTowers = current
 	end)
-end
-
-local function stopRecording()
-	if not recording then return end
-	recording = false
-	if connection then connection:Disconnect() connection = nil end
-	generateAndShowScript()
 end
 
 local function generateReplayCode()
@@ -196,21 +214,23 @@ local function parseCF(str)
 	return CFrame.new(n[1],n[2],n[3])
 end
 
-local towerCache = {}
+local placedTowers = {}
 
 local actions = {
 ]]
 
 	for _, act in ipairs(recordedActions) do
-		local line = '    {Action = "' .. act.Action .. '", '
-		if act.Action == "Upgrade" then
-			line = line .. 'OldName = "' .. act.OldName:gsub('"', '\\"') .. '", Name = "' .. act.Name:gsub('"', '\\"') .. '", '
-		else
-			line = line .. 'Name = "' .. act.Name:gsub('"', '\\"') .. '", '
-		end
-		line = line .. 'CFrameStr = "' .. act.CFrameStr:gsub('"', '\\"') .. '", Timestamp = ' .. string.format("%.6f", act.Timestamp) .. '},\n'
-		code = code .. line
-	end
+    	local line = '    {Action = "' .. act.Action .. '", Index = ' .. act.Index .. ', '
+
+    	if act.Action == "Upgrade" then
+    		line = line .. 'Name = "' .. act.Name .. '", '
+    	else
+    		line = line .. 'Name = "' .. act.Name .. '", '
+    	end
+
+	    line = line .. 'CFrameStr = "' .. act.CFrameStr .. '", Timestamp = ' .. string.format("%.6f", act.Timestamp) .. '},\n'
+    	code = code .. line
+    end
 
 	code = code .. [[
 }
@@ -231,30 +251,30 @@ local function replay()
 
 		local key = tostring(cf.Position)
 		if a.Action == "Spawn" then
-			SpawnTower:InvokeServer(a.Name, cf)
-			task.wait(0.25)
-			local tower = findNearestTower(a.Name, cf)
-			if tower then
-				towerCache[key] = tower
-			end
-		elseif a.Action == "Sell" then
-			local tower = towerCache[key] or findNearestTower(a.Name, cf)
-			if tower then
-				SellTower:InvokeServer(tower)
-				towerCache[key] = nil
-			end
-		elseif a.Action == "Upgrade" then
-            local old = findNearestTower(a.OldName, cf)
-            if old then
-                SpawnTower:InvokeServer(a.Name, cf, old)
+        	SpawnTower:InvokeServer(a.Name, cf)
+        	task.wait(0.25)
+        	local tower = findNearestTower(a.Name, cf)
+        	if tower then
+	        	placedTowers[a.Index] = tower
+        	end
 
-                task.wait(0.3)
+        elseif a.Action == "Sell" then
+        	local tower = placedTowers[a.Index]
+        	if tower then
+		        SellTower:InvokeServer(tower)
+        		placedTowers[a.Index] = nil
+        	end
 
-                local newTower = findNearestTower(a.Name, cf)
-                if newTower then
-                    towerCache[key] = newTower
-                end
-            end
+        elseif a.Action == "Upgrade" then
+        	local old = placedTowers[a.Index]
+        	if old then
+		        SpawnTower:InvokeServer(a.Name, cf, old)
+	        	task.wait(0.3)
+	        	local newTower = findNearestTower(a.Name, cf)
+	        	if newTower then
+		        	placedTowers[a.Index] = newTower
+	        	end
+        	end
         end
 	end
 end

@@ -4,9 +4,13 @@ local RunService = game:GetService("RunService")
 local VirtualUser = game:GetService("VirtualUser")
 local LP = Players.LocalPlayer
 
-local Functions = ReplicatedStorage:WaitForChild("Functions")
-local SpawnTower = Functions:WaitForChild("SpawnTower")
-local SellTower = Functions:WaitForChild("SellTower")
+local PLACE_MAIN = 93249115521759
+
+if game.PlaceId == MAP_PLACE_ID then
+    local Functions = ReplicatedStorage:WaitForChild("Functions")
+    local SpawnTower = Functions:WaitForChild("SpawnTower")
+    local SellTower = Functions:WaitForChild("SellTower")
+end
 
 local recording = false
 local recordedActions = {}
@@ -110,16 +114,19 @@ local RunService = game:GetService("RunService")
 local VirtualUser = game:GetService("VirtualUser")
 local LP = Players.LocalPlayer
 
-local Functions = ReplicatedStorage:WaitForChild("Functions")
-local SpawnTower = Functions:WaitForChild("SpawnTower")
-local SellTower = Functions:WaitForChild("SellTower")
-
 local PLACE_MAIN = 93249115521759
 local MAP_PLACE_ID = ]] .. game.PlaceId .. [[
 
-_G.mapname = "Desert" -- map name
+if game.PlaceId == MAP_PLACE_ID then
+    local Functions = ReplicatedStorage:WaitForChild("Functions")
+    local SpawnTower = Functions:WaitForChild("SpawnTower")
+    local SellTower = Functions:WaitForChild("SellTower")
+end
+
+_G.mapname = "Desert" -- map name (if Valentines then it's called Valentines2)
 _G.needtower = "Sun, Trophy, Engineer" -- tower needed
 _G.preciseTiming = true -- don't change if you don't know what you're doing
+_G.url = "urlgoeshere" -- (NEEDED for replaying example text host site: pastebin, github (need account but more organized) and etc.)
 
 local function equipNeededTowers()
 	local pg = LP:WaitForChild("PlayerGui", 5) if not pg then return end
@@ -301,7 +308,7 @@ local function generateAndShowScript()
 	local title = Instance.new("TextLabel")
 	title.Size = UDim2.new(1,0,0,45)
 	title.BackgroundTransparency = 1
-	title.Text = "MACRO GENERATED (Use loadstring to load the script)"
+	title.Text = "MACRO GENERATED (Use loadstring to replay/autofarm)"
 	title.TextColor3 = Color3.fromRGB(100,255,120)
 	title.Font = Enum.Font.GothamBold
 	title.TextSize = 22
@@ -377,80 +384,105 @@ local function stopRecording()
 	generateAndShowScript()
 end
 
-local screen = Instance.new("ScreenGui")
-screen.Name = "MacroRecorder"
-screen.ResetOnSpawn = false
-screen.Parent = game:GetService("CoreGui")
+if game.PlaceId = PLACE_MAIN then
+    local screen = Instance.new("ScreenGui")
+    screen.Name = "MacroRecorder"
+    screen.ResetOnSpawn = false
+    screen.Parent = game:GetService("CoreGui")
 
-local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0,260,0,160)
-frame.Position = UDim2.new(1,-270,0,15)
-frame.BackgroundColor3 = Color3.fromRGB(35,35,40)
-frame.BorderSizePixel = 0
-frame.Parent = screen
-Instance.new("UICorner", frame).CornerRadius = UDim.new(0,10)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0,160,0,160)
+    frame.Position = UDim2.new(1,-270,0,15)
+    frame.BackgroundColor3 = Color3.fromRGB(35,35,40)
+    frame.BorderSizePixel = 0
+    frame.Parent = screen
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0,10)
 
-local lbl = Instance.new("TextLabel")
-lbl.Size = UDim2.new(1,0,0,40)
-lbl.BackgroundTransparency = 1
-lbl.Text = "MACRO RECORDER"
-lbl.TextColor3 = Color3.fromRGB(255,220,80)
-lbl.Font = Enum.Font.GothamBlack
-lbl.TextSize = 17
-lbl.Parent = frame
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1,0,0,40)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = "Please run in-game!"
+    lbl.TextColor3 = Color3.fromRGB(255,220,80)
+    lbl.Font = Enum.Font.GothamBlack
+    lbl.TextSize = 17
+    lbl.Parent = frame
+    return
+else
+    local screen = Instance.new("ScreenGui")
+    screen.Name = "MacroRecorder"
+    screen.ResetOnSpawn = false
+    screen.Parent = game:GetService("CoreGui")
 
-local startBtn = Instance.new("TextButton")
-startBtn.Size = UDim2.new(0.45,0,0,50)
-startBtn.Position = UDim2.new(0.05,0,0.35,0)
-startBtn.BackgroundColor3 = Color3.fromRGB(0,200,60)
-startBtn.Text = "START RECORD"
-startBtn.TextColor3 = Color3.new(1,1,1)
-startBtn.Font = Enum.Font.GothamBold
-startBtn.TextSize = 15
-startBtn.Parent = frame
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0,260,0,160)
+    frame.Position = UDim2.new(1,-270,0,15)
+    frame.BackgroundColor3 = Color3.fromRGB(35,35,40)
+    frame.BorderSizePixel = 0
+    frame.Parent = screen
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0,10)
 
-local stopBtn = Instance.new("TextButton")
-stopBtn.Size = UDim2.new(0.45,0,0,50)
-stopBtn.Position = UDim2.new(0.5,0,0.35,0)
-stopBtn.BackgroundColor3 = Color3.fromRGB(200,40,40)
-stopBtn.Text = "STOP + GEN"
-stopBtn.TextColor3 = Color3.new(1,1,1)
-stopBtn.Font = Enum.Font.GothamBold
-stopBtn.TextSize = 15
-stopBtn.Parent = frame
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1,0,0,40)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = "MACRO RECORDER"
+    lbl.TextColor3 = Color3.fromRGB(255,220,80)
+    lbl.Font = Enum.Font.GothamBlack
+    lbl.TextSize = 17
+    lbl.Parent = frame
 
-local status = Instance.new("TextLabel")
-status.Size = UDim2.new(1,0,0,30)
-status.Position = UDim2.new(0,0,0.78,0)
-status.BackgroundTransparency = 1
-status.Text = "Ready"
-status.TextColor3 = Color3.fromRGB(180,180,180)
-status.Font = Enum.Font.Gotham
-status.TextSize = 14
-status.Parent = frame
+    local startBtn = Instance.new("TextButton")
+    startBtn.Size = UDim2.new(0.45,0,0,50)
+    startBtn.Position = UDim2.new(0.05,0,0.35,0)
+    startBtn.BackgroundColor3 = Color3.fromRGB(0,200,60)
+    startBtn.Text = "START RECORD"
+    startBtn.TextColor3 = Color3.new(1,1,1)
+    startBtn.Font = Enum.Font.GothamBold
+    startBtn.TextSize = 15
+    startBtn.Parent = frame
 
-for _,b in {startBtn, stopBtn} do
-	Instance.new("UICorner", b).CornerRadius = UDim.new(0,8)
+    local stopBtn = Instance.new("TextButton")
+    stopBtn.Size = UDim2.new(0.45,0,0,50)
+    stopBtn.Position = UDim2.new(0.5,0,0.35,0)
+    stopBtn.BackgroundColor3 = Color3.fromRGB(200,40,40)
+    stopBtn.Text = "STOP + GEN"
+    stopBtn.TextColor3 = Color3.new(1,1,1)
+    stopBtn.Font = Enum.Font.GothamBold
+    stopBtn.TextSize = 15
+    stopBtn.Parent = frame
+
+    local status = Instance.new("TextLabel")
+    status.Size = UDim2.new(1,0,0,30)
+    status.Position = UDim2.new(0,0,0.78,0)
+    status.BackgroundTransparency = 1
+    status.Text = "Ready"
+    status.TextColor3 = Color3.fromRGB(180,180,180)
+    status.Font = Enum.Font.Gotham
+    status.TextSize = 14
+    status.Parent = frame
+
+    for _,b in {startBtn, stopBtn} do
+    	Instance.new("UICorner", b).CornerRadius = UDim.new(0,8)
+    end
+
+    startBtn.MouseButton1Click:Connect(function()
+    	if recording then return end
+	    startBtn.Text = "RECORDING..."
+    	startBtn.BackgroundColor3 = Color3.fromRGB(180,0,0)
+    	startRecording()
+    	status.Text = "RECORDING ACTIVE"
+    	status.TextColor3 = Color3.fromRGB(255,90,90)
+    end)
+
+    stopBtn.MouseButton1Click:Connect(function()
+    	if not recording then return end
+    	stopBtn.Text = "GENERATING..."
+    	stopBtn.BackgroundColor3 = Color3.fromRGB(100,100,100)
+	    stopRecording()
+    	startBtn.Text = "START RECORD"
+	    startBtn.BackgroundColor3 = Color3.fromRGB(0,200,60)
+	    stopBtn.Text = "STOP + GEN"
+	    stopBtn.BackgroundColor3 = Color3.fromRGB(200,40,40)
+    	status.Text = "Done - Check clipboard + GUI"
+	    status.TextColor3 = Color3.fromRGB(100,255,140)
+    end)
 end
-
-startBtn.MouseButton1Click:Connect(function()
-	if recording then return end
-	startBtn.Text = "RECORDING..."
-	startBtn.BackgroundColor3 = Color3.fromRGB(180,0,0)
-	startRecording()
-	status.Text = "RECORDING ACTIVE"
-	status.TextColor3 = Color3.fromRGB(255,90,90)
-end)
-
-stopBtn.MouseButton1Click:Connect(function()
-	if not recording then return end
-	stopBtn.Text = "GENERATING..."
-	stopBtn.BackgroundColor3 = Color3.fromRGB(100,100,100)
-	stopRecording()
-	startBtn.Text = "START RECORD"
-	startBtn.BackgroundColor3 = Color3.fromRGB(0,200,60)
-	stopBtn.Text = "STOP + GEN"
-	stopBtn.BackgroundColor3 = Color3.fromRGB(200,40,40)
-	status.Text = "Done - Check clipboard + GUI"
-	status.TextColor3 = Color3.fromRGB(100,255,140)
-end)

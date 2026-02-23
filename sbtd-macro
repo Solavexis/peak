@@ -420,7 +420,7 @@ local function stopRecording()
 	generateAndShowScript()
 end
 
-if game.PlaceId = PLACE_MAIN then
+if game.PlaceId == PLACE_MAIN then
     local screen = Instance.new("ScreenGui")
     screen.Name = "MacroRecorder"
     screen.ResetOnSpawn = false

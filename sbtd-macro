@@ -124,9 +124,10 @@ if game.PlaceId == MAP_PLACE_ID then
 end
 
 _G.mapname = "Desert" -- map name (if Valentines then it's called Valentines2)
-_G.needtower = "Sun, Trophy, Engineer" -- tower needed
+_G.needtower = "Default, Bomb" -- tower needed
 _G.preciseTiming = true -- don't change if you don't know what you're doing
-_G.url = "urlgoeshere" -- (NEEDED for replaying example text host site: pastebin, github (need account but more organized) and etc.)
+_G.url = "urlgoeshere" -- (NEEDED for replaying, (NEEDED TO BE RAW) example of text host site: pastebin, github (need account but a bit more organized) and etc.)
+-- example of url: pastebin: https://pastebin.com/raw/ the string, github: https://raw.githubusercontent.com/ username / repo /refs/heads/main/ nameofthefile
 
 local function equipNeededTowers()
 	local pg = LP:WaitForChild("PlayerGui", 5) if not pg then return end
@@ -140,6 +141,15 @@ local function equipNeededTowers()
 		end
 	end
 end
+
+local function queueScript()
+    if syn and syn.queue_on_teleport then
+        syn.queue_on_teleport('loadstring(game:HttpGet("'.. _G.url ..'"))()')
+    elseif queue_on_teleport then
+        queue_on_teleport('loadstring(game:HttpGet("'.. _G.url ..'"))()')
+    end
+end
+queueScript()
 
 local function touchFinish()
 	local obby = workspace:FindFirstChild("Obby") if not obby then return end

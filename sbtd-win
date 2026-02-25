@@ -38,8 +38,10 @@ local function touchFinish()
     firetouchinterest(hrp, finish, 1)
 end
 
-local function teleport()
-	ReplicatedStorage.Events.PlayerExit:FireServer()
+local function teleport(id)
+    if game.PlaceId ~= id then
+        TeleportService:Teleport(id, LP)
+    end
 end
 
 local function tp()
@@ -141,7 +143,7 @@ task.spawn(function()
                 if gg then
                     local exit = gg:FindFirstChild("Exit")
                     if exit and exit.Visible then
-                        teleport()
+                        teleport(PLACE_MAIN)
                     end
                 end
             end

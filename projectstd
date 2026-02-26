@@ -14,15 +14,6 @@ local function teleportTo(targetPlaceId)
     if tpGui and tpGui:IsA("ScreenGui") then
         tpGui.Enabled = true
     end
-
-    pcall(function()
-        if queue_on_teleport then
-            queue_on_teleport('loadstring(game:HttpGet("' .. SCRIPT_URL .. '"))()')
-        elseif syn and syn.queue_on_teleport then
-            syn.queue_on_teleport('loadstring(game:HttpGet("' .. SCRIPT_URL .. '"))()')
-        end
-    end)
-
     TeleportService:Teleport(targetPlaceId)
 end
 
@@ -47,6 +38,27 @@ local function collectAllRings()
                         firetouchinterest(ring, hrp, 1)
                     end)
                 end
+            end
+        end
+    end
+end
+
+local function collectAllOrbs()
+    local char = player.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    local collectibles = Workspace:FindFirstChild("Collectibles")
+    if not collectibles then return end
+
+    for _, model in ipairs(collectibles:GetChildren()) do
+        if model:IsA("BasePart") then
+            local ring = model:FindFirstChild("TouchInterest")
+            if ring then
+                firetouchinterest(ring, hrp, 0)
+                task.wait(0.01)
+                firetouchinterest(ring, hrp, 1)
             end
         end
     end
@@ -82,6 +94,37 @@ listLayout.Padding = UDim.new(0, 8)
 listLayout.SortOrder = Enum.SortOrder.LayoutOrder
 listLayout.Parent = mainFrame
 
+local UIS = game:GetService("UserInputService")
+local frame = mainFrame
+
+local dragToggle, dragStart, startPos
+
+frame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragToggle = true
+        dragStart = input.Position
+        startPos = frame.Position
+        
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragToggle = false
+            end
+        end)
+    end
+end)
+
+UIS.InputChanged:Connect(function(input)
+    if dragToggle and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = input.Position - dragStart
+        frame.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
 local function createButton(text, callback)
     local btn = Instance.new("TextButton")
     btn.Size = UDim2.new(1, -20, 0, 45)
@@ -100,6 +143,14 @@ local function createButton(text, callback)
     return btn
 end
 
+pcall(function()
+    if queue_on_teleport then
+        queue_on_teleport('loadstring(game:HttpGet("' .. SCRIPT_URL .. '"))()')
+    elseif syn and syn.queue_on_teleport then
+        syn.queue_on_teleport('loadstring(game:HttpGet("' .. SCRIPT_URL .. '"))()')
+    end
+end)
+
 if game.PlaceId == 95932206229482 then
     return
 end
@@ -111,28 +162,8 @@ if game.PlaceId == 86496104885280 then
 end
 
 if game.PlaceId == 119361335046198 then
-    local loopToggle = false
-    local TP_STEP_SIZE = 1
-    local connection
-
-    local loopBtn = createButton("Start TP Walk", function()
-        loopToggle = not loopToggle
-
-        if loopToggle then
-            loopBtn.Text = "Stop TP Walk"
-            connection = RunService.Heartbeat:Connect(function()
-                if humanoid.MoveDirection.Magnitude > 0 then
-                    local moveDir = humanoid.MoveDirection.Unit 
-                    local step = moveDir * TP_STEP_SIZE  
-                    hrp.CFrame = hrp.CFrame + step
-                end
-            end)
-        else
-            if connection then
-                connection:Disconnect()
-                connection = nil
-            end
-        end
+    createButton("Collect Speed Orbs", function()
+        collectAllOrbs()
     end)
 
     createButton("Collect Rings", function()

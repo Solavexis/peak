@@ -1,28 +1,27 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
--- ============== LOAD MP3s FROM MusicFolder ==============
+-- ============== MUSIC PLAYER ==============
 local musicFolder = "MusicFolder/"
 local songList = {}
 
-local function getListFiles(path)
+local function getFiles(path)
     if listfiles then return listfiles(path) end
     if syn and syn.listfiles then return syn.listfiles(path) end
     return {}
 end
 
-for _, filePath in ipairs(getListFiles(musicFolder)) do
-    if filePath:lower():match("%.mp3$") then
-        local name = filePath:match("([^/\\]+)%.mp3$") or "Unknown"
-        local assetId = getcustomasset(filePath)
+for _, path in ipairs(getFiles(musicFolder)) do
+    if path:lower():match("%.mp3$") then
+        local name = path:match("([^/\\]+)%.mp3$") or "Song"
+        local asset = getcustomasset(path)
         
         local sound = Instance.new("Sound")
-        sound.SoundId = assetId
+        sound.SoundId = asset
         sound.Volume = 1
         sound.Looped = false
         sound.Parent = playerGui
@@ -32,52 +31,41 @@ for _, filePath in ipairs(getListFiles(musicFolder)) do
 end
 
 if #songList == 0 then
-    warn("No .mp3 files found in MusicFolder!")
+    warn("No MP3 files found in MusicFolder!")
 end
 
--- Shuffle function
-local function shuffle(tbl)
-    local new = {}
-    for _, v in ipairs(tbl) do table.insert(new, v) end
-    for i = #new, 2, -1 do
-        local j = math.random(i)
-        new[i], new[j] = new[j], new[i]
-    end
-    return new
-end
-
-local playlist = shuffle(songList)
+local playlist = {}
+for i, v in ipairs(songList) do playlist[i] = v end
 local currentIndex = 1
 local currentSound = nil
 local isPlaying = false
-local progressConn = nil
 
-if not _G.volume then _G.volume = 1 end
+if not _G.volume then _G.volume = 0.8 end
 
--- ============== GUI ==============
+-- ============== GUI (flat, minimal, like your sketch) ==============
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "SpotifyMini"
+screenGui.Name = "FlatMusicPlayer"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = playerGui
 
-local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 260, 0, 380)
-mainFrame.Position = UDim2.new(0.5, -130, 0.5, -190)
-mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-mainFrame.BorderSizePixel = 0
-mainFrame.Parent = screenGui
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 280, 0, 110)
+frame.Position = UDim2.new(0.5, -140, 0.9, -130)
+frame.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+frame.BorderSizePixel = 0
+frame.Parent = screenGui
 
 local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 18)
-corner.Parent = mainFrame
+corner.CornerRadius = UDim.new(0, 10)
+corner.Parent = frame
 
--- Draggable (smooth + clamped)
+-- Draggable (flat + smooth)
 local dragging, dragStart, startPos
-mainFrame.InputBegan:Connect(function(input)
+frame.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         dragging = true
         dragStart = input.Position
-        startPos = mainFrame.Position
+        startPos = frame.Position
         input.Changed:Connect(function()
             if input.UserInputState == Enum.UserInputState.End then dragging = false end
         end)
@@ -87,273 +75,149 @@ end)
 UserInputService.InputChanged:Connect(function(input)
     if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         local delta = input.Position - dragStart
-        local newX = startPos.X.Offset + delta.X
-        local newY = startPos.Y.Offset + delta.Y
-        
-        local screen = workspace.CurrentCamera.ViewportSize
-        newX = math.clamp(newX, 0, screen.X - 260)
-        newY = math.clamp(newY, 0, screen.Y - 380)
-        
-        mainFrame.Position = UDim2.new(0, newX, 0, newY)
+        frame.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
     end
 end)
 
--- Album Art (spinning vinyl)
-local albumFrame = Instance.new("Frame")
-albumFrame.Size = UDim2.new(0, 180, 0, 180)
-albumFrame.Position = UDim2.new(0.5, -90, 0, 25)
-albumFrame.BackgroundTransparency = 1
-albumFrame.Parent = mainFrame
+-- Song name (top)
+local songLabel = Instance.new("TextLabel")
+songLabel.Size = UDim2.new(1, -20, 0, 24)
+songLabel.Position = UDim2.new(0, 10, 0, 8)
+songLabel.BackgroundTransparency = 1
+songLabel.Text = "No song"
+songLabel.TextColor3 = Color3.new(0.9, 0.9, 0.9)
+songLabel.TextScaled = true
+songLabel.Font = Enum.Font.GothamSemibold
+songLabel.TextXAlignment = Enum.TextXAlignment.Left
+songLabel.Parent = frame
 
-local albumArt = Instance.new("ImageLabel")
-albumArt.Size = UDim2.new(1, 0, 1, 0)
-albumArt.BackgroundTransparency = 1
-albumArt.Image = "rbxassetid://6031094678" -- spinning vinyl record
-albumArt.Parent = albumFrame
-
-local artCorner = Instance.new("UICorner")
-artCorner.CornerRadius = UDim.new(1, 0) -- perfect circle
-artCorner.Parent = albumArt
-
--- Song Info
-local songName = Instance.new("TextLabel")
-songName.Size = UDim2.new(1, -40, 0, 30)
-songName.Position = UDim2.new(0, 20, 0, 220)
-songName.BackgroundTransparency = 1
-songName.Text = "No song loaded"
-songName.TextColor3 = Color3.new(1, 1, 1)
-songName.TextScaled = true
-songName.Font = Enum.Font.GothamBold
-songName.TextTruncate = Enum.TextTruncate.AtEnd
-songName.Parent = mainFrame
-
+-- Time
 local timeLabel = Instance.new("TextLabel")
-timeLabel.Size = UDim2.new(1, -40, 0, 20)
-timeLabel.Position = UDim2.new(0, 20, 0, 255)
+timeLabel.Size = UDim2.new(1, -20, 0, 16)
+timeLabel.Position = UDim2.new(0, 10, 0, 34)
 timeLabel.BackgroundTransparency = 1
 timeLabel.Text = "0:00 / 0:00"
-timeLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+timeLabel.TextColor3 = Color3.fromRGB(140, 140, 140)
 timeLabel.TextScaled = true
 timeLabel.Font = Enum.Font.Gotham
-timeLabel.Parent = mainFrame
+timeLabel.TextXAlignment = Enum.TextXAlignment.Left
+timeLabel.Parent = frame
 
--- Progress Bar
-local progressBG = Instance.new("Frame")
-progressBG.Size = UDim2.new(0.9, 0, 0, 6)
-progressBG.Position = UDim2.new(0.05, 0, 0, 280)
-progressBG.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-progressBG.Parent = mainFrame
-
-local progressCorner = Instance.new("UICorner")
-progressCorner.CornerRadius = UDim.new(0, 3)
-progressCorner.Parent = progressBG
-
-local progressFill = Instance.new("Frame")
-progressFill.Size = UDim2.new(0, 0, 1, 0)
-progressFill.BackgroundColor3 = Color3.fromRGB(0, 255, 100)
-progressFill.Parent = progressBG
-
-local progressFillCorner = Instance.new("UICorner")
-progressFillCorner.CornerRadius = UDim.new(0, 3)
-progressFillCorner.Parent = progressFill
-
--- Volume Bar
-local volLabel = Instance.new("TextLabel")
-volLabel.Size = UDim2.new(0, 60, 0, 20)
-volLabel.Position = UDim2.new(0.05, 0, 0, 305)
-volLabel.BackgroundTransparency = 1
-volLabel.Text = "Volume"
-volLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
-volLabel.TextXAlignment = Enum.TextXAlignment.Left
-volLabel.Font = Enum.Font.Gotham
-volLabel.TextScaled = true
-volLabel.Parent = mainFrame
-
-local volBG = Instance.new("Frame")
-volBG.Size = UDim2.new(0.6, 0, 0, 6)
-volBG.Position = UDim2.new(0.35, 0, 0, 312)
-volBG.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-volBG.Parent = mainFrame
-
-local volCorner = Instance.new("UICorner")
-volCorner.CornerRadius = UDim.new(0, 3)
-volCorner.Parent = volBG
-
-local volFill = Instance.new("Frame")
-volFill.Size = UDim2.new(_G.volume, 0, 1, 0)
-volFill.BackgroundColor3 = Color3.fromRGB(0, 255, 100)
-volFill.Parent = volBG
-
-local volFillCorner = Instance.new("UICorner")
-volFillCorner.CornerRadius = UDim.new(0, 3)
-volFillCorner.Parent = volFill
-
--- Controls Frame
+-- Controls (flat buttons, centered row)
 local controls = Instance.new("Frame")
-controls.Size = UDim2.new(0.9, 0, 0, 50)
-controls.Position = UDim2.new(0.05, 0, 0, 325)
+controls.Size = UDim2.new(1, -20, 0, 40)
+controls.Position = UDim2.new(0, 10, 0, 58)
 controls.BackgroundTransparency = 1
-controls.Parent = mainFrame
+controls.Parent = frame
 
-local list = Instance.new("UIListLayout")
-list.FillDirection = Enum.FillDirection.Horizontal
-list.HorizontalAlignment = Enum.HorizontalAlignment.Center
-list.Padding = UDim.new(0, 12)
-list.Parent = controls
+local listLayout = Instance.new("UIListLayout")
+listLayout.FillDirection = Enum.FillDirection.Horizontal
+listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+listLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+listLayout.Padding = UDim.new(0, 16)
+listLayout.Parent = controls
 
-local function makeBtn(text, callback)
+local function makeControlBtn(text, sizeX, callback, bgColor)
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 45, 0, 45)
-    btn.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    btn.Size = UDim2.new(0, sizeX or 48, 0, 36)
+    btn.BackgroundColor3 = bgColor or Color3.fromRGB(38, 38, 38)
+    btn.BorderSizePixel = 0
     btn.Text = text
-    btn.TextColor3 = Color3.new(1, 1, 1)
+    btn.TextColor3 = Color3.new(1,1,1)
     btn.TextScaled = true
     btn.Font = Enum.Font.GothamBold
     btn.Parent = controls
     
-    local bCorner = Instance.new("UICorner")
-    bCorner.CornerRadius = UDim.new(1, 0)
-    bCorner.Parent = btn
+    local btnCorner = Instance.new("UICorner")
+    btnCorner.CornerRadius = UDim.new(0, 8)
+    btnCorner.Parent = btn
     
     btn.MouseButton1Click:Connect(callback)
     return btn
 end
 
-local prevBtn = makeBtn("⏮", function() prevSong() end)
-local rwBtn   = makeBtn("⏪", function() seek(-10) end)
-local playBtn = makeBtn("▶", function() togglePlay() end)
-local fwBtn   = makeBtn("⏩", function() seek(10) end)
-local nextBtn = makeBtn("⏭", function() nextSong() end)
+makeControlBtn("<<", 48, function()
+    if currentSound then currentSound.TimePosition = math.max(0, currentSound.TimePosition - 10) end
+end)
 
--- ============== FUNCTIONS ==============
-local function formatTime(sec)
-    local m = math.floor(sec / 60)
-    local s = math.floor(sec % 60)
-    return string.format("%d:%02d", m, s)
-end
-
-local function updateProgress()
-    if currentSound and currentSound.TimeLength > 0 then
-        local prog = currentSound.TimePosition / currentSound.TimeLength
-        progressFill.Size = UDim2.new(prog, 0, 1, 0)
-        timeLabel.Text = formatTime(currentSound.TimePosition) .. " / " .. formatTime(currentSound.TimeLength)
+local playPauseBtn = makeControlBtn("▶", 56, function()
+    if not currentSound then
+        if #playlist > 0 then
+            currentSound = playlist[currentIndex].sound
+            currentSound.TimePosition = 0
+            currentSound.Volume = _G.volume
+            currentSound:Play()
+            isPlaying = true
+            playPauseBtn.Text = "■"
+            songLabel.Text = playlist[currentIndex].name
+        end
+        return
     end
-end
-
-local function updateAlbumSpin(dt)
-    if isPlaying and currentSound and currentSound.Playing then
-        albumArt.Rotation = (albumArt.Rotation + 90 * dt) % 360
+    
+    if isPlaying then
+        currentSound:Pause()
+        isPlaying = false
+        playPauseBtn.Text = "▶"
+    else
+        currentSound:Resume()
+        isPlaying = true
+        playPauseBtn.Text = "■"
     end
-end
+end, Color3.fromRGB(45, 45, 45))
 
-local function updateGUI()
+makeControlBtn(">>", 48, function()
+    if currentSound then currentSound.TimePosition = math.min(currentSound.TimeLength, currentSound.TimePosition + 10) end
+end)
+
+makeControlBtn("Next", 60, function()
     if #playlist == 0 then return end
-    songName.Text = playlist[currentIndex].name
-    if currentSound then
-        currentSound.Volume = _G.volume
-    end
-    volFill.Size = UDim2.new(_G.volume, 0, 1, 0)
-end
-
-local function stopAll()
-    for _, s in ipairs(songList) do
-        s.sound:Stop()
-    end
-    isPlaying = false
-    playBtn.Text = "▶"
-end
-
-local function playCurrent()
-    stopAll()
-    if #playlist == 0 then return end
+    currentIndex = currentIndex + 1
+    if currentIndex > #playlist then currentIndex = 1 end
+    
+    if currentSound then currentSound:Stop() end
     currentSound = playlist[currentIndex].sound
     currentSound.TimePosition = 0
     currentSound.Volume = _G.volume
     currentSound:Play()
     isPlaying = true
-    playBtn.Text = "⏸"
-    updateGUI()
-end
+    playPauseBtn.Text = "■"
+    songLabel.Text = playlist[currentIndex].name
+end, Color3.fromRGB(38, 38, 38))
 
-local function togglePlay()
-    if not currentSound then 
-        if #playlist > 0 then playCurrent() end
-        return 
-    end
-    if isPlaying then
-        currentSound:Pause()
-        isPlaying = false
-        playBtn.Text = "▶"
-    else
-        currentSound:Resume()
-        isPlaying = true
-        playBtn.Text = "⏸"
-    end
-end
-
-local function nextSong()
-    if #playlist == 0 then return end
-    currentIndex = currentIndex + 1
-    if currentIndex > #playlist then
-        playlist = shuffle(songList)
-        currentIndex = 1
-    end
-    playCurrent()
-end
-
-local function prevSong()
-    if #playlist == 0 then return end
-    currentIndex = currentIndex - 1
-    if currentIndex < 1 then currentIndex = #playlist end
-    playCurrent()
-end
-
-local function seek(seconds)
-    if currentSound then
-        currentSound.TimePosition = math.clamp(currentSound.TimePosition + seconds, 0, currentSound.TimeLength)
-    end
-end
-
--- Click progress bar to seek
-progressBG.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        local relX = (input.Position.X - progressBG.AbsolutePosition.X) / progressBG.AbsoluteSize.X
-        if currentSound then
-            currentSound.TimePosition = relX * currentSound.TimeLength
+-- Progress update
+RunService.Heartbeat:Connect(function()
+    if currentSound and currentSound.Playing then
+        local pos = currentSound.TimePosition
+        local len = currentSound.TimeLength
+        if len > 0 then
+            local m1, s1 = math.floor(pos / 60), math.floor(pos % 60)
+            local m2, s2 = math.floor(len / 60), math.floor(len % 60)
+            timeLabel.Text = string.format("%d:%02d / %d:%02d", m1, s1, m2, s2)
         end
     end
 end)
 
--- Click volume bar to set
-volBG.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        local relX = (input.Position.X - volBG.AbsolutePosition.X) / volBG.AbsoluteSize.X
-        _G.volume = math.clamp(relX, 0, 1)
-        if currentSound then currentSound.Volume = _G.volume end
-        volFill.Size = UDim2.new(_G.volume, 0, 1, 0)
-    end
-end)
-
--- Auto next on finish
-local function connectEnded()
-    if currentSound then
-        currentSound.Ended:Connect(function()
-            if isPlaying then nextSong() end
+-- Auto next
+if #playlist > 0 then
+    for _, s in ipairs(songList) do
+        s.sound.Ended:Connect(function()
+            if isPlaying then
+                currentIndex = currentIndex + 1
+                if currentIndex > #playlist then currentIndex = 1 end
+                currentSound = playlist[currentIndex].sound
+                currentSound.TimePosition = 0
+                currentSound.Volume = _G.volume
+                currentSound:Play()
+                songLabel.Text = playlist[currentIndex].name
+                playPauseBtn.Text = "■"
+            end
         end)
     end
 end
 
--- Main loop
-RunService.Heartbeat:Connect(function(dt)
-    updateAlbumSpin(dt)
-    updateProgress()
-end)
-
--- Start
-if #playlist > 0 then
-    currentIndex = math.random(1, #playlist)
-    playCurrent()
-    connectEnded()
-end
-
-print("Spotify Mini Player loaded! (" .. #songList .. " songs)")
+print("Flat Music Player loaded | Found songs: " .. #songList)

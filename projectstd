@@ -53,12 +53,12 @@ local function collectAllOrbs()
     if not collectibles then return end
 
     for _, model in ipairs(collectibles:GetChildren()) do
-        if model:IsA("BasePart") then
-            local ring = model:FindFirstChild("TouchInterest")
-            if ring then
-                firetouchinterest(ring, hrp, 0)
+        if model:FindFirstChild("SpeedOrb") then
+            local orb = model:FindFirstChild("TouchInterest")
+            if orb then
+                firetouchinterest(orb, hrp, 0)
                 task.wait(0.01)
-                firetouchinterest(ring, hrp, 1)
+                firetouchinterest(orb, hrp, 1)
             end
         end
     end
@@ -152,12 +152,18 @@ pcall(function()
 end)
 
 if game.PlaceId == 95932206229482 then
-    return
+    createButton("Music Player", function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/music"))()
+    end)
 end
 
 if game.PlaceId == 86496104885280 then
     createButton("Teleport to Lobby Test", function()
         teleportTo(95932206229482)
+    end)
+
+    createButton("Music Player", function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/music"))()
     end)
 end
 
@@ -172,5 +178,9 @@ if game.PlaceId == 119361335046198 then
 
     createButton("TP Back to Lobby Test", function()
         teleportTo(95932206229482)
+    end)
+
+    createButton("Music Player", function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/music"))()
     end)
 end

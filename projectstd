@@ -35,7 +35,8 @@ local function collectAllRings()
 
     for _, item in ipairs(collectibles:GetChildren()) do
         local ringPart = item:FindFirstChild("Ring")
-        if ringPart and ringPart:IsA("BasePart") then
+        local ring = ringPart:FindFirstChild("Ring")
+        if ring and ring:IsA("BasePart") then
             local touchInterest = ringPart:FindFirstChildWhichIsA("TouchInterest")
             if touchInterest then
                 pcall(function()
@@ -124,7 +125,7 @@ if game.PlaceId == 119361335046198 then
                         local alien = enemies:FindFirstChild("Special Stage Alien")
                         if not alien then return end
 
-                        local alienRoot = alien:FindFirstChild("HumanoidRootPart") or alien:FindFirstChildWhichIsA("BasePart")
+                        local alienRoot = alien:FindFirstChild("RootPart") or alien:FindFirstChildWhichIsA("BasePart")
                         if not alienRoot then return end
 
                         local char = player.Character

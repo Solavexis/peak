@@ -7,10 +7,6 @@ local Workspace = game:GetService("Workspace")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
-if game.PlaceId == 95932206229482 then
-    return
-end
-
 local function teleportTo(targetPlaceId)
     local tpGui = playerGui:FindFirstChild("Teleporting")
     if tpGui and tpGui:IsA("ScreenGui") then
@@ -34,14 +30,18 @@ local function collectAllRings()
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
 
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("BasePart") and string.find(string.lower(obj.Name), "ring") then
-            local touchInterest = obj:FindFirstChildWhichIsA("TouchInterest")
+    local collectibles = Workspace:FindFirstChild("Collectibles")
+    if not collectibles then return end
+
+    for _, item in ipairs(collectibles:GetChildren()) do
+        local ringPart = item:FindFirstChild("Ring")
+        if ringPart and ringPart:IsA("BasePart") then
+            local touchInterest = ringPart:FindFirstChildWhichIsA("TouchInterest")
             if touchInterest then
                 pcall(function()
-                    firetouchinterest(obj, hrp, 0)
+                    firetouchinterest(ringPart, hrp, 0)
                     task.wait(0.01)
-                    firetouchinterest(obj, hrp, 1)
+                    firetouchinterest(ringPart, hrp, 1)
                 end)
             end
         end
@@ -96,6 +96,10 @@ local function createButton(text, callback)
     return btn
 end
 
+if game.PlaceId == 95932206229482 then
+    return
+end
+
 if game.PlaceId == 86496104885280 then
     createButton("Teleport to Lobby Test", function()
         teleportTo(95932206229482)
@@ -120,19 +124,15 @@ if game.PlaceId == 119361335046198 then
                         local alien = enemies:FindFirstChild("Special Stage Alien")
                         if not alien then return end
 
-                        local alienHRP = alien:FindFirstChild("HumanoidRootPart") or alien:FindFirstChildWhichIsA("BasePart")
-                        if not alienHRP then return end
+                        local alienRoot = alien:FindFirstChild("HumanoidRootPart") or alien:FindFirstChildWhichIsA("BasePart")
+                        if not alienRoot then return end
 
                         local char = player.Character
                         if not char then return end
                         local hrp = char:FindFirstChild("HumanoidRootPart")
                         if not hrp then return end
 
-                        local lookVec = alienHRP.CFrame.LookVector
-                        local behindOffset = lookVec * -10
-                        local tpPos = alienHRP.Position + behindOffset + Vector3.new(0, 3, 0)
-
-                        hrp.CFrame = CFrame.new(tpPos, tpPos + lookVec)
+                        hrp.CFrame = alienRoot.CFrame
                     end)
                     task.wait(0.08)
                 end

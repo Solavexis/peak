@@ -5,6 +5,8 @@ local TeleportService = game:GetService("TeleportService")
 local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
+local character = player.Character
+local humanoid = character.Humanoid
 local playerGui = player:WaitForChild("PlayerGui")
 
 local function teleportTo(targetPlaceId)
@@ -110,40 +112,25 @@ end
 
 if game.PlaceId == 119361335046198 then
     local loopToggle = false
-    local loopThread = nil
+    local TP_STEP_SIZE = 1
+    local connection
 
-    local loopBtn = createButton("Start Loop TP", function()
+    local loopBtn = createButton("Start TP Walk", function()
         loopToggle = not loopToggle
 
         if loopToggle then
-            loopBtn.Text = "Stop Loop TP"
-            loopThread = task.spawn(function()
-                while loopToggle do
-                    pcall(function()
-                        local enemies = Workspace:FindFirstChild("Enemies")
-                        if not enemies then return end
-
-                        local alien = enemies:FindFirstChild("Special Stage Alien")
-                        if not alien then return end
-
-                        local rootPart = alien:FindFirstChild("RootPart")
-                        if not rootPart then return end
-
-                        local char = player.Character
-                        if not char then return end
-                        local hrp = char:FindFirstChild("HumanoidRootPart")
-                        if not hrp then return end
-
-                        hrp.CFrame = rootPart.CFrame
-                    end)
-                    task.wait(0.08)
+            loopBtn.Text = "Stop TP Walk"
+            connection = RunService.Heartbeat:Connect(function()
+                if humanoid.MoveDirection.Magnitude > 0 then
+                    local moveDir = humanoid.MoveDirection.Unit 
+                    local step = moveDir * TP_STEP_SIZE  
+                    hrp.CFrame = hrp.CFrame + step
                 end
             end)
         else
-            loopBtn.Text = "Start Loop TP"
-            if loopThread then
-                task.cancel(loopThread)
-                loopThread = nil
+            if connection then
+                connection:Disconnect()
+                connection = nil
             end
         end
     end)

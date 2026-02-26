@@ -33,17 +33,18 @@ local function collectAllRings()
     local collectibles = Workspace:FindFirstChild("Collectibles")
     if not collectibles then return end
 
-    for _, item in ipairs(collectibles:GetChildren()) do
-        local ringPart = item:FindFirstChild("Ring")
-        local ring = ringPart:FindFirstChild("Ring")
-        if ring and ring:IsA("BasePart") then
-            local touchInterest = ringPart:FindFirstChildWhichIsA("TouchInterest")
-            if touchInterest then
-                pcall(function()
-                    firetouchinterest(ringPart, hrp, 0)
-                    task.wait(0.01)
-                    firetouchinterest(ringPart, hrp, 1)
-                end)
+    for _, model in ipairs(collectibles:GetChildren()) do
+        if model:IsA("Model") then
+            local ring = model:FindFirstChild("Ring")
+            if ring then
+                local touchInterest = ring:FindFirstChildWhichIsA("TouchInterest")
+                if touchInterest then
+                    pcall(function()
+                        firetouchinterest(ring, hrp, 0)
+                        task.wait(0.01)
+                        firetouchinterest(ring, hrp, 1)
+                    end)
+                end
             end
         end
     end
@@ -125,15 +126,15 @@ if game.PlaceId == 119361335046198 then
                         local alien = enemies:FindFirstChild("Special Stage Alien")
                         if not alien then return end
 
-                        local alienRoot = alien:FindFirstChild("RootPart")
-                        if not alienRoot then return end
+                        local rootPart = alien:FindFirstChild("RootPart")
+                        if not rootPart then return end
 
                         local char = player.Character
                         if not char then return end
                         local hrp = char:FindFirstChild("HumanoidRootPart")
                         if not hrp then return end
 
-                        hrp.CFrame = alienRoot.CFrame
+                        hrp.CFrame = rootPart.CFrame
                     end)
                     task.wait(0.08)
                 end

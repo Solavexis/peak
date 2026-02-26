@@ -125,7 +125,7 @@ if game.PlaceId == 119361335046198 then
                         local alien = enemies:FindFirstChild("Special Stage Alien")
                         if not alien then return end
 
-                        local alienRoot = alien:FindFirstChild("RootPart") or alien:FindFirstChildWhichIsA("BasePart")
+                        local alienRoot = alien:FindFirstChild("RootPart")
                         if not alienRoot then return end
 
                         local char = player.Character

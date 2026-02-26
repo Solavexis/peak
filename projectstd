@@ -37,7 +37,7 @@ local function collectAllRings()
         if model:IsA("Model") then
             local ring = model:FindFirstChild("Ring")
             if ring then
-                local touchInterest = ring:FindFirstChildWhichIsA("TouchInterest")
+                local touchInterest = ring:FindFirstChild("TouchInterest")
                 if touchInterest then
                     pcall(function()
                         firetouchinterest(ring, hrp, 0)

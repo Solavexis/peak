@@ -3,11 +3,18 @@ local SCRIPT_URL = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/
 local Players = game:GetService("Players")
 local TeleportService = game:GetService("TeleportService")
 local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
-local character = player.Character
-local humanoid = character.Humanoid
 local playerGui = player:WaitForChild("PlayerGui")
+
+local character = player.Character or player.CharacterAdded:Wait()
+local hrp = character:WaitForChild("HumanoidRootPart")
+
+player.CharacterAdded:Connect(function(newChar)
+    character = newChar
+    hrp = newChar:WaitForChild("HumanoidRootPart")
+end)
 
 local function teleportTo(targetPlaceId)
     local tpGui = playerGui:FindFirstChild("Teleporting")
@@ -18,20 +25,15 @@ local function teleportTo(targetPlaceId)
 end
 
 local function collectAllRings()
-    local char = player.Character
-    if not char then return end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
-
     local collectibles = Workspace:FindFirstChild("Collectibles")
     if not collectibles then return end
-
     for _, model in ipairs(collectibles:GetChildren()) do
         if model:IsA("Model") then
             local ring = model:FindFirstChild("Ring")
             if ring then
-                local touchInterest = ring:FindFirstChild("TouchInterest")
-                if touchInterest then
+                local touch = ring:FindFirstChild("TouchInterest")
+                if touch then
                     pcall(function()
                         firetouchinterest(ring, hrp, 0)
                         task.wait(0.01)
@@ -44,24 +46,34 @@ local function collectAllRings()
 end
 
 local function collectAllOrbs()
-    local char = player.Character
-    if not char then return end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
-
     local collectibles = Workspace:FindFirstChild("Collectibles")
     if not collectibles then return end
-
-    for _, model in ipairs(collectibles:GetChildren()) do
-        if model:FindFirstChild("SpeedOrb") then
-            local orb = model:FindFirstChild("TouchInterest")
-            if orb then
-                firetouchinterest(orb, hrp, 0)
-                task.wait(0.01)
-                firetouchinterest(orb, hrp, 1)
+    for _, item in ipairs(collectibles:GetChildren()) do
+        local orb = item:FindFirstChild("SpeedOrb")
+        if orb then
+            local touch = orb:FindFirstChild("TouchInterest")
+            if touch then
+                pcall(function()
+                    firetouchinterest(orb, hrp, 0)
+                    task.wait(0.01)
+                    firetouchinterest(orb, hrp, 1)
+                end)
             end
         end
     end
+end
+
+pcall(function()
+    if queue_on_teleport then
+        queue_on_teleport('loadstring(game:HttpGet("' .. SCRIPT_URL .. '"))()')
+    elseif syn and syn.queue_on_teleport then
+        syn.queue_on_teleport('loadstring(game:HttpGet("' .. SCRIPT_URL .. '"))()')
+    end
+end)
+
+if game.PlaceId == 95932206229482 then
+    return
 end
 
 local screenGui = Instance.new("ScreenGui")
@@ -94,29 +106,24 @@ listLayout.Padding = UDim.new(0, 8)
 listLayout.SortOrder = Enum.SortOrder.LayoutOrder
 listLayout.Parent = mainFrame
 
-local UIS = game:GetService("UserInputService")
-local frame = mainFrame
-
-local dragToggle, dragStart, startPos
-
-frame.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragToggle = true
+local dragging, dragStart, startPos
+mainFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
         dragStart = input.Position
-        startPos = frame.Position
-        
+        startPos = mainFrame.Position
         input.Changed:Connect(function()
             if input.UserInputState == Enum.UserInputState.End then
-                dragToggle = false
+                dragging = false
             end
         end)
     end
 end)
 
-UIS.InputChanged:Connect(function(input)
-    if dragToggle and input.UserInputType == Enum.UserInputType.MouseMovement then
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         local delta = input.Position - dragStart
-        frame.Position = UDim2.new(
+        mainFrame.Position = UDim2.new(
             startPos.X.Scale,
             startPos.X.Offset + delta.X,
             startPos.Y.Scale,
@@ -134,36 +141,20 @@ local function createButton(text, callback)
     btn.TextScaled = true
     btn.Font = Enum.Font.GothamSemibold
     btn.Parent = mainFrame
-
     local btnCorner = Instance.new("UICorner")
     btnCorner.CornerRadius = UDim.new(0, 8)
     btnCorner.Parent = btn
-
     btn.MouseButton1Click:Connect(callback)
     return btn
 end
 
-pcall(function()
-    if queue_on_teleport then
-        queue_on_teleport('loadstring(game:HttpGet("' .. SCRIPT_URL .. '"))()')
-    elseif syn and syn.queue_on_teleport then
-        syn.queue_on_teleport('loadstring(game:HttpGet("' .. SCRIPT_URL .. '"))()')
-    end
+createButton("Music Player", function()
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/music"))()
 end)
-
-if game.PlaceId == 95932206229482 then
-    createButton("Music Player", function()
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/music"))()
-    end)
-end
 
 if game.PlaceId == 86496104885280 then
     createButton("Teleport to Lobby Test", function()
         teleportTo(95932206229482)
-    end)
-
-    createButton("Music Player", function()
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/music"))()
     end)
 end
 
@@ -171,16 +162,10 @@ if game.PlaceId == 119361335046198 then
     createButton("Collect Speed Orbs", function()
         collectAllOrbs()
     end)
-
     createButton("Collect Rings", function()
         collectAllRings()
     end)
-
     createButton("TP Back to Lobby Test", function()
         teleportTo(95932206229482)
-    end)
-
-    createButton("Music Player", function()
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/music"))()
     end)
 end

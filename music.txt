@@ -1,0 +1,223 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- ============== MUSIC PLAYER ==============
+local musicFolder = "MusicFolder/"
+local songList = {}
+
+local function getFiles(path)
+    if listfiles then return listfiles(path) end
+    if syn and syn.listfiles then return syn.listfiles(path) end
+    return {}
+end
+
+for _, path in ipairs(getFiles(musicFolder)) do
+    if path:lower():match("%.mp3$") then
+        local name = path:match("([^/\\]+)%.mp3$") or "Song"
+        local asset = getcustomasset(path)
+        
+        local sound = Instance.new("Sound")
+        sound.SoundId = asset
+        sound.Volume = 1
+        sound.Looped = false
+        sound.Parent = playerGui
+        
+        table.insert(songList, {name = name, sound = sound})
+    end
+end
+
+if #songList == 0 then
+    warn("No MP3 files found in MusicFolder!")
+end
+
+local playlist = {}
+for i, v in ipairs(songList) do playlist[i] = v end
+local currentIndex = 1
+local currentSound = nil
+local isPlaying = false
+
+if not _G.volume then _G.volume = 0.8 end
+
+-- ============== GUI (flat, minimal, like your sketch) ==============
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "FlatMusicPlayer"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = playerGui
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 280, 0, 110)
+frame.Position = UDim2.new(0.5, -140, 0.9, -130)
+frame.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+frame.BorderSizePixel = 0
+frame.Parent = screenGui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 10)
+corner.Parent = frame
+
+-- Draggable (flat + smooth)
+local dragging, dragStart, startPos
+frame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = frame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then dragging = false end
+        end)
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        frame.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+-- Song name (top)
+local songLabel = Instance.new("TextLabel")
+songLabel.Size = UDim2.new(1, -20, 0, 24)
+songLabel.Position = UDim2.new(0, 10, 0, 8)
+songLabel.BackgroundTransparency = 1
+songLabel.Text = "No song"
+songLabel.TextColor3 = Color3.new(0.9, 0.9, 0.9)
+songLabel.TextScaled = true
+songLabel.Font = Enum.Font.GothamSemibold
+songLabel.TextXAlignment = Enum.TextXAlignment.Left
+songLabel.Parent = frame
+
+-- Time
+local timeLabel = Instance.new("TextLabel")
+timeLabel.Size = UDim2.new(1, -20, 0, 16)
+timeLabel.Position = UDim2.new(0, 10, 0, 34)
+timeLabel.BackgroundTransparency = 1
+timeLabel.Text = "0:00 / 0:00"
+timeLabel.TextColor3 = Color3.fromRGB(140, 140, 140)
+timeLabel.TextScaled = true
+timeLabel.Font = Enum.Font.Gotham
+timeLabel.TextXAlignment = Enum.TextXAlignment.Left
+timeLabel.Parent = frame
+
+-- Controls (flat buttons, centered row)
+local controls = Instance.new("Frame")
+controls.Size = UDim2.new(1, -20, 0, 40)
+controls.Position = UDim2.new(0, 10, 0, 58)
+controls.BackgroundTransparency = 1
+controls.Parent = frame
+
+local listLayout = Instance.new("UIListLayout")
+listLayout.FillDirection = Enum.FillDirection.Horizontal
+listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+listLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+listLayout.Padding = UDim.new(0, 16)
+listLayout.Parent = controls
+
+local function makeControlBtn(text, sizeX, callback, bgColor)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, sizeX or 48, 0, 36)
+    btn.BackgroundColor3 = bgColor or Color3.fromRGB(38, 38, 38)
+    btn.BorderSizePixel = 0
+    btn.Text = text
+    btn.TextColor3 = Color3.new(1,1,1)
+    btn.TextScaled = true
+    btn.Font = Enum.Font.GothamBold
+    btn.Parent = controls
+    
+    local btnCorner = Instance.new("UICorner")
+    btnCorner.CornerRadius = UDim.new(0, 8)
+    btnCorner.Parent = btn
+    
+    btn.MouseButton1Click:Connect(callback)
+    return btn
+end
+
+makeControlBtn("<<", 48, function()
+    if currentSound then currentSound.TimePosition = math.max(0, currentSound.TimePosition - 10) end
+end)
+
+local playPauseBtn = makeControlBtn("▶", 56, function()
+    if not currentSound then
+        if #playlist > 0 then
+            currentSound = playlist[currentIndex].sound
+            currentSound.TimePosition = 0
+            currentSound.Volume = _G.volume
+            currentSound:Play()
+            isPlaying = true
+            playPauseBtn.Text = "■"
+            songLabel.Text = playlist[currentIndex].name
+        end
+        return
+    end
+    
+    if isPlaying then
+        currentSound:Pause()
+        isPlaying = false
+        playPauseBtn.Text = "▶"
+    else
+        currentSound:Resume()
+        isPlaying = true
+        playPauseBtn.Text = "■"
+    end
+end, Color3.fromRGB(45, 45, 45))
+
+makeControlBtn(">>", 48, function()
+    if currentSound then currentSound.TimePosition = math.min(currentSound.TimeLength, currentSound.TimePosition + 10) end
+end)
+
+makeControlBtn("Next", 60, function()
+    if #playlist == 0 then return end
+    currentIndex = currentIndex + 1
+    if currentIndex > #playlist then currentIndex = 1 end
+    
+    if currentSound then currentSound:Stop() end
+    currentSound = playlist[currentIndex].sound
+    currentSound.TimePosition = 0
+    currentSound.Volume = _G.volume
+    currentSound:Play()
+    isPlaying = true
+    playPauseBtn.Text = "■"
+    songLabel.Text = playlist[currentIndex].name
+end, Color3.fromRGB(38, 38, 38))
+
+-- Progress update
+RunService.Heartbeat:Connect(function()
+    if currentSound and currentSound.Playing then
+        local pos = currentSound.TimePosition
+        local len = currentSound.TimeLength
+        if len > 0 then
+            local m1, s1 = math.floor(pos / 60), math.floor(pos % 60)
+            local m2, s2 = math.floor(len / 60), math.floor(len % 60)
+            timeLabel.Text = string.format("%d:%02d / %d:%02d", m1, s1, m2, s2)
+        end
+    end
+end)
+
+-- Auto next
+if #playlist > 0 then
+    for _, s in ipairs(songList) do
+        s.sound.Ended:Connect(function()
+            if isPlaying then
+                currentIndex = currentIndex + 1
+                if currentIndex > #playlist then currentIndex = 1 end
+                currentSound = playlist[currentIndex].sound
+                currentSound.TimePosition = 0
+                currentSound.Volume = _G.volume
+                currentSound:Play()
+                songLabel.Text = playlist[currentIndex].name
+                playPauseBtn.Text = "■"
+            end
+        end)
+    end
+end
+
+print("Flat Music Player loaded | Found songs: " .. #songList)

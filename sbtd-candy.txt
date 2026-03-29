@@ -1,0 +1,95 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LP = Players.LocalPlayer
+local TeleportService = game:GetService("TeleportService")
+local VirtualUser = game:GetService("VirtualUser")
+local PlaceLimbo = 91569927171575
+local PlaceMain = 93249115521759
+
+if syn and syn.queue_on_teleport then
+    syn.queue_on_teleport([[
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/sbtd-candy"))()
+    ]])
+elseif queue_on_teleport then
+    queue_on_teleport([[
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/sbtd-candy"))()
+    ]])
+end
+
+LP.Idled:Connect(function()
+    VirtualUser:CaptureController()
+    VirtualUser:ClickButton2(Vector2.new(0,0))
+end)
+
+local function fireTouch(part)
+    if LP.Character and LP.Character:FindFirstChild("HumanoidRootPart") and part then
+        firetouchinterest(LP.Character.HumanoidRootPart, part, 0)
+        task.wait(0.05)
+        firetouchinterest(LP.Character.HumanoidRootPart, part, 1)
+        task.wait(0.05)
+    end
+end
+
+local function collectCandies()
+    local candiesFolder = workspace:FindFirstChild("Candies")
+    if candiesFolder then
+        for _, candy in pairs(candiesFolder:GetChildren()) do
+            if candy:IsA("BasePart") then
+                local ti = candy:FindFirstChild("TouchInterest") or candy:FindFirstChildWhichIsA("TouchTransmitter")
+                if ti then
+                    fireTouch(candy)
+                end
+            end
+        end
+    end
+end
+
+local function collectFinish()
+    local obby = workspace:FindFirstChild("Obby")
+    if obby and obby:FindFirstChild("Finish") then
+        fireTouch(obby.Finish)
+    end
+end
+
+local function teleportTo(placeId)
+    if game.PlaceId ~= placeId then
+        pcall(function()
+            TeleportService:Teleport(placeId, LP)
+        end)
+    end
+end
+
+task.spawn(function()
+    while true do
+        task.wait(2)
+        if game.PlaceId == PlaceLimbo then
+            local gui = LP:FindFirstChild("PlayerGui")
+            if gui then
+                local gameGui = gui:FindFirstChild("GameGui")
+                if gameGui then
+                    local exit = gameGui:FindFirstChild("Exit")
+                    if exit and exit.Visible then
+                        teleportTo(PlaceMain)
+                    end
+                end
+            end
+        elseif game.PlaceId == PlaceMain then
+            local startTime = tick()
+            collectCandies()
+            collectFinish()
+            task.wait(3)
+            ReplicatedStorage.Party.Teleport:InvokeServer("Limbo",true)
+        end
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(120)
+        if game.PlaceId == PlaceLimbo then
+            teleportTo(PlaceMain)
+        elseif game.PlaceId == PlaceMain then
+            ReplicatedStorage.Party.Teleport:InvokeServer("Limbo",true)
+        end
+    end
+end)

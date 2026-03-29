@@ -1,0 +1,214 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local VirtualUser = game:GetService("VirtualUser")
+local LP = Players.LocalPlayer
+
+local PLACE_MAIN = 93249115521759
+local MAP_PLACE_ID = 124546322564930
+local SpawnTower
+local SellTower
+
+if game.PlaceId == MAP_PLACE_ID then
+    local Functions = ReplicatedStorage:WaitForChild("Functions")
+    SpawnTower = Functions:WaitForChild("SpawnTower")
+    SellTower = Functions:WaitForChild("SellTower")
+end
+
+_G.mapname = "Valentines2" -- map name (if Valentines then it's called Valentines2)
+_G.needtower = "Trophy, Buddy, Sun" -- tower needed (comma separated)
+_G.preciseTiming = true -- don't change if you don't know what you're doing
+_G.url = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/sbtd-test" -- (NEEDED for replaying, (NEEDED TO BE RAW) example of text host site: pastebin, github (need account but a bit more organized) and etc.)
+-- example of url: pastebin: https://pastebin.com/raw/ the string, github: https://raw.githubusercontent.com/ username / repo /refs/heads/main/ nameofthefile
+
+local function equipNeededTowers()
+	local pg = LP:WaitForChild("PlayerGui",5) if not pg then return end
+	local shop = pg:WaitForChild("ShopGui",5) if not shop then return end
+	local inv = shop:WaitForChild("Inventory",5) if not inv then return end
+	for _,item in string.split(_G.needtower,",") do
+		local t = item:match("^%s*(.-)%s*$")
+		if t ~= "" and not inv:FindFirstChild(t) then
+			ReplicatedStorage:WaitForChild("InteractItem"):InvokeServer(t)
+			task.wait(.4)
+		end
+	end
+end
+
+local function queueScript()
+	if syn and syn.queue_on_teleport then
+		syn.queue_on_teleport('loadstring(game:HttpGet("'.._G.url..'"))()')
+	elseif queue_on_teleport then
+		queue_on_teleport('loadstring(game:HttpGet("'.._G.url..'"))()')
+	end
+end
+queueScript()
+
+local function touchFinish()
+	local obby = workspace:FindFirstChild("Obby") if not obby then return end
+	local finish = obby:FindFirstChild("Finish") if not finish then return end
+	local hrp = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+	firetouchinterest(hrp,finish,0) task.wait() firetouchinterest(hrp,finish,1)
+end
+
+local function teleport()
+	ReplicatedStorage.Events.PlayerExit:FireServer()
+end
+
+local function tp()
+	ReplicatedStorage.Party.Teleport:InvokeServer(_G.mapname,true)
+end
+
+LP.Idled:Connect(function()
+	VirtualUser:CaptureController()
+	VirtualUser:ClickButton2(Vector2.new())
+end)
+
+local function findNearestTower(name,cf)
+	local closest,dist=nil,math.huge
+	for _,v in workspace.Towers:GetChildren() do
+		if v.Name==name then
+			local d=(v:GetPivot().Position-cf.Position).Magnitude
+			if d<dist then dist=d closest=v end
+		end
+	end
+	return closest
+end
+
+local function parseCF(str)
+	local n={}
+	for x in str:gmatch("-?[%d%.]+") do n[#n+1]=tonumber(x) end
+	if #n<3 then return nil end
+	return CFrame.new(n[1],n[2],n[3])
+end
+
+local placedTowers = {}
+
+local actions = {
+    {Action = "Spawn", Index = 1, Name = "Trophy", CFrameStr = "CFrame.new(-70.563369751,159.151473999,39.602172852)", Timestamp = 11.029167},
+    {Action = "Spawn", Index = 2, Name = "Trophy", CFrameStr = "CFrame.new(-75.026351929,158.947540283,35.959434509)", Timestamp = 13.625001},
+    {Action = "Spawn", Index = 3, Name = "Trophy", CFrameStr = "CFrame.new(-84.366699219,159.229354858,3.154020309)", Timestamp = 19.287501},
+    {Action = "Upgrade", Index = 3, Name = "Winner", CFrameStr = "CFrame.new(-84.366699219,158.924102783,3.154020309)", Timestamp = 23.304168},
+    {Action = "Spawn", Index = 4, Name = "Trophy", CFrameStr = "CFrame.new(-74.466323853,159.011474609,42.592819214)", Timestamp = 30.575002},
+    {Action = "Upgrade", Index = 4, Name = "Winner", CFrameStr = "CFrame.new(-74.466323853,158.526824951,42.592819214)", Timestamp = 49.229170},
+    {Action = "Upgrade", Index = 1, Name = "Winner", CFrameStr = "CFrame.new(-70.563369751,158.526824951,39.602172852)", Timestamp = 66.045837},
+    {Action = "Upgrade", Index = 3, Name = "Award", CFrameStr = "CFrame.new(-84.363220215,158.546813965,3.157651186)", Timestamp = 82.495838},
+    {Action = "Upgrade", Index = 2, Name = "Winner", CFrameStr = "CFrame.new(-75.026351929,158.947540283,35.959434509)", Timestamp = 89.512505},
+    {Action = "Upgrade", Index = 4, Name = "Award", CFrameStr = "CFrame.new(-74.466323853,158.526824951,42.592819214)", Timestamp = 100.691673},
+    {Action = "Upgrade", Index = 1, Name = "Award", CFrameStr = "CFrame.new(-70.563369751,158.526824951,39.602172852)", Timestamp = 106.512506},
+    {Action = "Upgrade", Index = 2, Name = "Award", CFrameStr = "CFrame.new(-75.026351929,158.526824951,35.959434509)", Timestamp = 111.695840},
+    {Action = "Spawn", Index = 5, Name = "Sun", CFrameStr = "CFrame.new(-41.531257629,159.334609985,35.160015106)", Timestamp = 127.200007},
+    {Action = "Upgrade", Index = 5, Name = "Solarflare", CFrameStr = "CFrame.new(-41.531257629,158.523452759,35.160015106)", Timestamp = 136.050008},
+    {Action = "Spawn", Index = 6, Name = "Buddy", CFrameStr = "CFrame.new(-43.145515442,158.958084106,37.730220795)", Timestamp = 145.870842},
+    {Action = "Upgrade", Index = 6, Name = "Best Buddy", CFrameStr = "CFrame.new(-43.145515442,158.598037720,37.730220795)", Timestamp = 147.454175},
+    {Action = "Spawn", Index = 7, Name = "Buddy", CFrameStr = "CFrame.new(-43.445625305,159.151336670,37.324829102)", Timestamp = 150.658342},
+    {Action = "Upgrade", Index = 7, Name = "Best Buddy", CFrameStr = "CFrame.new(-43.457019806,159.003204346,37.318099976)", Timestamp = 152.700009},
+    {Action = "Spawn", Index = 8, Name = "Buddy", CFrameStr = "CFrame.new(-43.422878265,159.236892700,37.719505310)", Timestamp = 158.270842},
+    {Action = "Upgrade", Index = 8, Name = "Best Buddy", CFrameStr = "CFrame.new(-43.422878265,158.804504395,37.719505310)", Timestamp = 159.658342},
+    {Action = "Spawn", Index = 9, Name = "Buddy", CFrameStr = "CFrame.new(-43.424594879,159.106796265,37.139408112)", Timestamp = 161.716676},
+    {Action = "Upgrade", Index = 9, Name = "Best Buddy", CFrameStr = "CFrame.new(-43.424331665,159.003204346,37.139476776)", Timestamp = 162.933343},
+    {Action = "Spawn", Index = 10, Name = "Buddy", CFrameStr = "CFrame.new(-43.490798950,159.708633423,37.099300385)", Timestamp = 166.225009},
+    {Action = "Upgrade", Index = 10, Name = "Best Buddy", CFrameStr = "CFrame.new(-43.490798950,159.003204346,37.099300385)", Timestamp = 167.487509},
+    {Action = "Spawn", Index = 11, Name = "Buddy", CFrameStr = "CFrame.new(-43.556369781,159.215148926,37.549858093)", Timestamp = 170.858343},
+    {Action = "Upgrade", Index = 11, Name = "Best Buddy", CFrameStr = "CFrame.new(-43.556369781,159.003204346,37.549858093)", Timestamp = 172.116676},
+    {Action = "Upgrade", Index = 5, Name = "Neutronstar", CFrameStr = "CFrame.new(-41.531257629,158.590850830,35.160015106)", Timestamp = 176.862510},
+    {Action = "Sell", Index = 3, Name = "Award", CFrameStr = "CFrame.new(-84.363220215,158.924102783,3.157650948)", Timestamp = 197.150011},
+    {Action = "Sell", Index = 2, Name = "Award", CFrameStr = "CFrame.new(-75.026351929,158.526824951,35.959434509)", Timestamp = 200.037511},
+    {Action = "Sell", Index = 1, Name = "Award", CFrameStr = "CFrame.new(-70.563369751,158.526824951,39.602172852)", Timestamp = 202.491678},
+    {Action = "Upgrade", Index = 4, Name = "Bloxy", CFrameStr = "CFrame.new(-74.466323853,158.526824951,42.592819214)", Timestamp = 207.675012},
+    {Action = "Upgrade", Index = 5, Name = "Redstar", CFrameStr = "CFrame.new(-41.531257629,158.591339111,35.160015106)", Timestamp = 214.054179},
+    {Action = "Spawn", Index = 12, Name = "Sun", CFrameStr = "CFrame.new(-43.551322937,159.023788452,34.280860901)", Timestamp = 232.645846},
+    {Action = "Upgrade", Index = 12, Name = "Solarflare", CFrameStr = "CFrame.new(-43.551322937,158.804504395,34.280860901)", Timestamp = 234.004180},
+    {Action = "Upgrade", Index = 12, Name = "Neutronstar", CFrameStr = "CFrame.new(-43.551322937,158.804504395,34.280860901)", Timestamp = 234.833346},
+    {Action = "Upgrade", Index = 12, Name = "Redstar", CFrameStr = "CFrame.new(-43.551322937,158.804504395,34.280860901)", Timestamp = 236.395847},
+    {Action = "Spawn", Index = 13, Name = "Sun", CFrameStr = "CFrame.new(-45.739570618,159.371276855,32.996841431)", Timestamp = 245.616680},
+    {Action = "Upgrade", Index = 13, Name = "Solarflare", CFrameStr = "CFrame.new(-45.739570618,159.003204346,32.996841431)", Timestamp = 247.283347},
+    {Action = "Upgrade", Index = 13, Name = "Neutronstar", CFrameStr = "CFrame.new(-45.739570618,159.003204346,32.996841431)", Timestamp = 248.691681},
+    {Action = "Upgrade", Index = 13, Name = "Redstar", CFrameStr = "CFrame.new(-45.739570618,158.909057617,32.996841431)", Timestamp = 259.895848},
+    {Action = "Sell", Index = 4, Name = "Bloxy", CFrameStr = "CFrame.new(-74.465980530,158.525863647,42.594398499)", Timestamp = 278.608349},
+    {Action = "Upgrade", Index = 5, Name = "Star", CFrameStr = "CFrame.new(-41.531257629,158.512298584,35.160015106)", Timestamp = 284.466682},
+    {Action = "Upgrade", Index = 12, Name = "Star", CFrameStr = "CFrame.new(-43.551322937,158.973556519,34.280860901)", Timestamp = 289.083349},
+    {Action = "Upgrade", Index = 13, Name = "Star", CFrameStr = "CFrame.new(-45.739570618,158.974502563,32.996841431)", Timestamp = 309.641684},
+    {Action = "Upgrade", Index = 5, Name = "Bluestar", CFrameStr = "CFrame.new(-41.531257629,158.577438354,35.160015106)", Timestamp = 331.266685},
+    {Action = "Upgrade", Index = 12, Name = "Bluestar", CFrameStr = "CFrame.new(-43.551322937,158.974700928,34.280860901)", Timestamp = 349.641686},
+    {Action = "Upgrade", Index = 5, Name = "Nova", CFrameStr = "CFrame.new(-41.531257629,158.578063965,35.160015106)", Timestamp = 386.229188},
+    {Action = "Upgrade", Index = 13, Name = "Bluestar", CFrameStr = "CFrame.new(-45.739570618,158.918258667,32.996841431)", Timestamp = 397.454189},
+    {Action = "Upgrade", Index = 12, Name = "Nova", CFrameStr = "CFrame.new(-43.551322937,158.919418335,34.280860901)", Timestamp = 409.354189},
+    {Action = "Upgrade", Index = 13, Name = "Nova", CFrameStr = "CFrame.new(-45.739570618,158.974990845,32.996841431)", Timestamp = 423.529190},
+    {Action = "Upgrade", Index = 13, Name = "Supernova", CFrameStr = "CFrame.new(-45.739570618,158.953399658,32.996841431)", Timestamp = 451.095858},
+    {Action = "Upgrade", Index = 5, Name = "Supernova", CFrameStr = "CFrame.new(-41.531257629,158.575927734,35.160015106)", Timestamp = 463.579192},
+    {Action = "Upgrade", Index = 12, Name = "Supernova", CFrameStr = "CFrame.new(-43.551322937,158.774597168,34.280860901)", Timestamp = 472.512526},
+}
+
+local function replay()
+	if #actions == 0 then return end
+	local shift = 7 - actions[1].Timestamp
+	local start = workspace.DistributedGameTime
+
+	for _, a in ipairs(actions) do
+		local target = start + a.Timestamp + shift
+		while workspace.DistributedGameTime < target do
+			RunService.Heartbeat:Wait()
+		end
+
+		local cf = parseCF(a.CFrameStr)
+		if not cf then continue end
+
+		local key = tostring(cf.Position)
+		if a.Action == "Spawn" then
+        	SpawnTower:InvokeServer(a.Name, cf)
+        	task.wait(0.25)
+        	local tower = findNearestTower(a.Name, cf)
+        	if tower then
+	        	placedTowers[a.Index] = tower
+        	end
+
+        elseif a.Action == "Sell" then
+        	local tower = placedTowers[a.Index]
+        	if tower then
+		        SellTower:InvokeServer(tower)
+        		placedTowers[a.Index] = nil
+        	end
+
+        elseif a.Action == "Upgrade" then
+        	local old = placedTowers[a.Index]
+        	if old then
+		        SpawnTower:InvokeServer(a.Name, cf, old)
+	        	task.wait(0.3)
+	        	local newTower = findNearestTower(a.Name, cf)
+	        	if newTower then
+		        	placedTowers[a.Index] = newTower
+	        	end
+        	end
+        end
+	end
+end
+
+task.spawn(function()
+	while task.wait(2) do
+		local id = game.PlaceId
+		if id == MAP_PLACE_ID then
+			local pg = LP.PlayerGui
+			if pg and pg:FindFirstChild("GameGui") then
+				local exit = pg.GameGui:FindFirstChild("Exit")
+				if exit and exit.Visible then
+					teleport()
+				end
+			end
+		elseif id == PLACE_MAIN then
+			touchFinish()
+			equipNeededTowers()
+			task.wait(2.5)
+			tp()
+			task.delay(90, function()
+				if game.PlaceId == PLACE_MAIN then tp() end
+			end)
+		end
+	end
+end)
+
+if game.PlaceId == MAP_PLACE_ID then
+	replay()
+end
+
+print("Macro loaded | Map: ".._G.mapname)

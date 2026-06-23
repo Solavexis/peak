@@ -12,6 +12,66 @@ local RunService = game:GetService("RunService")
 local SPAM_INTERVAL = 1.5
 local TARGET_WINS_PER_CYCLE = 3
 
+-- ============ HTTP REQUEST FUNCTION ============
+local function httpPost(url, body)
+    local payload = type(body) == "table" and HttpService:JSONEncode(body) or body
+    
+    if syn and syn.request then
+        local response = syn.request({
+            Url = url,
+            Method = "POST",
+            Headers = {
+                ["Content-Type"] = "application/json"
+            },
+            Body = payload
+        })
+        return response
+    elseif request then
+        local response = request({
+            Url = url,
+            Method = "POST",
+            Headers = {
+                ["Content-Type"] = "application/json"
+            },
+            Body = payload
+        })
+        return response
+    elseif http_request then
+        local response = http_request({
+            Url = url,
+            Method = "POST",
+            Headers = {
+                ["Content-Type"] = "application/json"
+            },
+            Body = payload
+        })
+        return response
+    elseif fluxus and fluxus.request then
+        local response = fluxus.request({
+            Url = url,
+            Method = "POST",
+            Headers = {
+                ["Content-Type"] = "application/json"
+            },
+            Body = payload
+        })
+        return response
+    elseif http and http.request then
+        local response = http.request({
+            Url = url,
+            Method = "POST",
+            Headers = {
+                ["Content-Type"] = "application/json"
+            },
+            Body = payload
+        })
+        return response
+    else
+        -- Fallback to HttpService
+        return {StatusCode = 200, Body = HttpService:PostAsync(url, payload, Enum.HttpContentType.ApplicationJson)}
+    end
+end
+
 -- ============ STATS TRACKING ============
 local Stats = {
     TotalExecutions = 0,
@@ -116,18 +176,12 @@ local function sendWebhook(cycleEXP)
         }}
     }
 
-    local success, err = pcall(function()
-        HttpService:PostAsync(
-            getgenv().Webhook,
-            HttpService:JSONEncode(payload),
-            Enum.HttpContentType.ApplicationJson
-        )
-    end)
+    local success, response = pcall(httpPost, getgenv().Webhook, payload)
 
     if success then
         print("[WEBHOOK] Stats sent successfully!")
     else
-        warn("[WEBHOOK] Failed to send: " .. tostring(err))
+        warn("[WEBHOOK] Failed to send: " .. tostring(response))
     end
 end
 

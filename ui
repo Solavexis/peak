@@ -241,10 +241,6 @@ function library:Window(name)
             Label.TextColor3 = color
         end
         pastSliders[winCount] = false
-
-	function Label:Set(newText)
-       	    self.Text = tostring(newText)
-    	end
 	
 	return Label
     end

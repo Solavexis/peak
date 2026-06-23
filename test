@@ -12,6 +12,11 @@ local RunService = game:GetService("RunService")
 local SPAM_INTERVAL = 1.5
 local TARGET_WINS_PER_CYCLE = 3
 
+-- ============ WAIT FOR GAME TO FULLY LOAD ============
+repeat task.wait() until game:IsLoaded()
+task.wait(1)
+print("[LOAD] Game fully loaded!")
+
 -- ============ HTTP REQUEST FUNCTION ============
 local function httpPost(url, body)
     local payload = type(body) == "table" and HttpService:JSONEncode(body) or body

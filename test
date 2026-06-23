@@ -1,84 +1,6 @@
--- ============ WEBHOOK CONFIG (SET THIS) ============
+-- ============ WEBHOOK CONFIG ============
 getgenv().Webhook = getgenv().Webhook or "PASTE_YOUR_WEBHOOK_URL_HERE"
--- ================================================
-
-local Players = game:GetService("Players")
-local LP = Players.LocalPlayer
-local HttpService = game:GetService("HttpService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
-
--- ============ CONFIGURATION ============
-local SPAM_INTERVAL = 1.5
-local TARGET_WINS_PER_CYCLE = 3
-
--- ============ WAIT FOR GAME TO FULLY LOAD ============
-repeat task.wait() until game:IsLoaded()
-task.wait(1)
-print("[LOAD] Game fully loaded!")
-
--- ============ HTTP REQUEST FUNCTION ============
-local function httpPost(url, body)
-    local payload = type(body) == "table" and HttpService:JSONEncode(body) or body
-    
-    if syn and syn.request then
-        local response = syn.request({
-            Url = url,
-            Method = "POST",
-            Headers = {
-                ["Content-Type"] = "application/json"
-            },
-            Body = payload
-        })
-        return response
-    elseif request then
-        local response = request({
-            Url = url,
-            Method = "POST",
-            Headers = {
-                ["Content-Type"] = "application/json"
-            },
-            Body = payload
-        })
-        return response
-    elseif http_request then
-        local response = http_request({
-            Url = url,
-            Method = "POST",
-            Headers = {
-                ["Content-Type"] = "application/json"
-            },
-            Body = payload
-        })
-        return response
-    elseif fluxus and fluxus.request then
-        local response = fluxus.request({
-            Url = url,
-            Method = "POST",
-            Headers = {
-                ["Content-Type"] = "application/json"
-            },
-            Body = payload
-        })
-        return response
-    elseif http and http.request then
-        local response = http.request({
-            Url = url,
-            Method = "POST",
-            Headers = {
-                ["Content-Type"] = "application/json"
-            },
-            Body = payload
-        })
-        return response
-    else
-        -- Fallback to HttpService
-        return {StatusCode = 200, Body = HttpService:PostAsync(url, payload, Enum.HttpContentType.ApplicationJson)}
-    end
-end
-
--- ============ STATS TRACKING ============
-local Stats = {
+getgenv().FarmStats = getgenv().FarmStats or {
     TotalExecutions = 0,
     TotalEXP = 0,
     Wins = 0,
@@ -90,17 +12,79 @@ local Stats = {
     RecentEXP = {},
     StartTime = tick()
 }
+-- ================================================
+
+local Players = game:GetService("Players")
+local LP = Players.LocalPlayer
+local HttpService = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+-- ============ WAIT FOR GAME TO FULLY LOAD ============
+repeat task.wait() until game:IsLoaded()
+task.wait(1)
+print("[LOAD] Game fully loaded!")
+
+-- ============ CONFIGURATION ============
+local SPAM_INTERVAL = 1.5
+local TARGET_WINS_PER_CYCLE = 3
+local Stats = getgenv().FarmStats
 
 local currentCycleWins = 0
 local currentCycleEXP = 0
 
+-- ============ HTTP REQUEST FUNCTION ============
+local function httpPost(url, body)
+    local payload = type(body) == "table" and HttpService:JSONEncode(body) or body
+    
+    if syn and syn.request then
+        return syn.request({
+            Url = url,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = payload
+        })
+    elseif request then
+        return request({
+            Url = url,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = payload
+        })
+    elseif http_request then
+        return http_request({
+            Url = url,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = payload
+        })
+    elseif fluxus and fluxus.request then
+        return fluxus.request({
+            Url = url,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = payload
+        })
+    elseif http and http.request then
+        return http.request({
+            Url = url,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = payload
+        })
+    else
+        return {StatusCode = 200, Body = HttpService:PostAsync(url, payload, Enum.HttpContentType.ApplicationJson)}
+    end
+end
+
 -- ============ QUEUE SCRIPT ON TELEPORT ============
 local function queueScript()
     local url = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/test"
+    local code = 'loadstring(game:HttpGet("'..url..'"))()'
     if syn and syn.queue_on_teleport then
-        syn.queue_on_teleport('loadstring(game:HttpGet("'..url..'"))()')
+        syn.queue_on_teleport(code)
     elseif queue_on_teleport then
-        queue_on_teleport('loadstring(game:HttpGet("'..url..'"))()')
+        queue_on_teleport(code)
     end
 end
 queueScript()
@@ -193,7 +177,7 @@ end
 -- ============ BATTLE FUNCTIONS ============
 local function startBattle()
     Stats.TotalExecutions = Stats.TotalExecutions + 1
-    local success, err = pcall(function()
+    pcall(function()
         ReplicatedStorage.Events.RemoteFunction.StartBattle:InvokeServer(
             "Chapter1",
             10,
@@ -205,9 +189,6 @@ local function startBattle()
             1
         )
     end)
-    if not success then
-        warn("[BATTLE] Failed to start: " .. tostring(err))
-    end
 end
 
 local function spawnCannon()
@@ -234,6 +215,14 @@ RunService.Heartbeat:Connect(function()
         spawnSlot6()
     end
 end)
+
+-- ============ REJOIN FUNCTION ============
+local function rejoin()
+    print("[REJOIN] Rejoining game after cycle completion...")
+    queueScript()
+    task.wait(0.5)
+    game:GetService("TeleportService"):Teleport(game.PlaceId, LP)
+end
 
 -- ============ WIN OR LOSE HANDLER ============
 ReplicatedStorage.Events.RemoteEvents.WinOrLose.OnClientEvent:Connect(function(didWin, exp, ...)
@@ -267,6 +256,10 @@ ReplicatedStorage.Events.RemoteEvents.WinOrLose.OnClientEvent:Connect(function(d
             
             currentCycleWins = 0
             currentCycleEXP = 0
+            
+            -- Rejoin after cycle
+            rejoin()
+            return
         end
     else
         Stats.Losses = Stats.Losses + 1
@@ -286,7 +279,10 @@ print("      BATTLE FARM SCRIPT STARTED        ")
 print("========================================")
 print("[INFO] Target wins per cycle: " .. TARGET_WINS_PER_CYCLE)
 print("[INFO] Spam interval: " .. SPAM_INTERVAL .. "s")
+print("[INFO] Rejoin after cycle: ON")
 print("[INFO] Webhook: " .. (getgenv().Webhook ~= "PASTE_YOUR_WEBHOOK_URL_HERE" and "SET" or "NOT SET"))
+print("[INFO] Previous cycles: " .. tostring(Stats.CyclesCompleted))
+print("[INFO] Previous total EXP: " .. tostring(Stats.TotalEXP))
 print("========================================")
 
 spawnCannon()

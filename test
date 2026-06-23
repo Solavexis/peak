@@ -1,5 +1,5 @@
 -- ============ WEBHOOK CONFIG (SET THIS) ============
-getgenv().Webhook = "PASTE_YOUR_WEBHOOK_URL_HERE"
+getgenv().Webhook = getgenv().Webhook or "PASTE_YOUR_WEBHOOK_URL_HERE"
 -- ================================================
 
 local Players = game:GetService("Players")

@@ -1,0 +1,235 @@
+-- ============ WEBHOOK CONFIG (SET THIS) ============
+getgenv().Webhook = "PASTE_YOUR_WEBHOOK_URL_HERE"
+-- ================================================
+
+local Players = game:GetService("Players")
+local LP = Players.LocalPlayer
+local HttpService = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+-- ============ CONFIGURATION ============
+local SPAM_INTERVAL = 1.5
+local TARGET_WINS_PER_CYCLE = 3
+
+-- ============ STATS TRACKING ============
+local Stats = {
+    TotalExecutions = 0,
+    TotalEXP = 0,
+    Wins = 0,
+    Losses = 0,
+    BattlesCompleted = 0,
+    WinStreak = 0,
+    BestWinStreak = 0,
+    CyclesCompleted = 0,
+    RecentEXP = {},
+    StartTime = tick()
+}
+
+local currentCycleWins = 0
+local currentCycleEXP = 0
+
+-- ============ QUEUE SCRIPT ON TELEPORT ============
+local function queueScript()
+    local url = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/test"
+    if syn and syn.queue_on_teleport then
+        syn.queue_on_teleport('loadstring(game:HttpGet("'..url..'"))()')
+    elseif queue_on_teleport then
+        queue_on_teleport('loadstring(game:HttpGet("'..url..'"))()')
+    end
+end
+queueScript()
+
+-- ============ ANTI-IDLE ============
+LP.Idled:Connect(function()
+    VirtualUser:CaptureController()
+    VirtualUser:ClickButton2(Vector2.new())
+end)
+
+-- ============ UTILITY FUNCTIONS ============
+local function getAverageEXP()
+    if #Stats.RecentEXP == 0 then return 0 end
+    local sum = 0
+    for _, exp in ipairs(Stats.RecentEXP) do
+        sum = sum + exp
+    end
+    return math.floor(sum / #Stats.RecentEXP)
+end
+
+local function formatRuntime(seconds)
+    local hours = math.floor(seconds / 3600)
+    local minutes = math.floor((seconds % 3600) / 60)
+    local secs = math.floor(seconds % 60)
+    return string.format("%02d:%02d:%02d", hours, minutes, secs)
+end
+
+local function getWinRate()
+    if Stats.BattlesCompleted == 0 then return "0%" end
+    return string.format("%.1f%%", (Stats.Wins / Stats.BattlesCompleted) * 100)
+end
+
+local function getEXPPerHour()
+    local runtime = tick() - Stats.StartTime
+    if runtime < 60 then return 0 end
+    return math.floor((Stats.TotalEXP / runtime) * 3600)
+end
+
+-- ============ DISCORD WEBHOOK SENDER ============
+local function sendWebhook(cycleEXP)
+    if not getgenv().Webhook or getgenv().Webhook == "PASTE_YOUR_WEBHOOK_URL_HERE" then
+        warn("[WEBHOOK] URL not set! Skipping webhook...")
+        return
+    end
+
+    local runtime = tick() - Stats.StartTime
+    local avgEXP = getAverageEXP()
+    local expPerHour = getEXPPerHour()
+    local winRate = getWinRate()
+    local avgPerCycle = Stats.CyclesCompleted > 0 and math.floor(Stats.TotalEXP / Stats.CyclesCompleted) or cycleEXP
+
+    local payload = {
+        username = "Battle Farm Logger",
+        avatar_url = "https://i.imgur.com/JR8kF0C.png",
+        embeds = {{
+            title = "📊 Battle Farm Statistics",
+            description = string.format("**Player:** `%s`\n**Place Id:** `%s`", LP.Name, game.PlaceId),
+            color = 0x00FF88,
+            fields = {
+                {name = "🎮 Total Executions", value = "```" .. tostring(Stats.TotalExecutions) .. "```", inline = true},
+                {name = "🏆 Total Wins", value = "```" .. tostring(Stats.Wins) .. "```", inline = true},
+                {name = "💀 Total Losses", value = "```" .. tostring(Stats.Losses) .. "```", inline = true},
+                {name = "📈 Win Rate", value = "```" .. winRate .. "```", inline = true},
+                {name = "⭐ Overall EXP", value = "```" .. tostring(Stats.TotalEXP) .. "```", inline = true},
+                {name = "💰 EXP/Hour", value = "```" .. tostring(expPerHour) .. "```", inline = true},
+                {name = "📊 Avg EXP/Win", value = "```" .. tostring(avgEXP) .. "```", inline = true},
+                {name = "🔄 Avg EXP/Cycle", value = "```" .. tostring(avgPerCycle) .. "```", inline = true},
+                {name = "✨ This Cycle EXP", value = "```" .. tostring(cycleEXP) .. "```", inline = true},
+                {name = "🔥 Current Streak", value = "```" .. tostring(Stats.WinStreak) .. "```", inline = true},
+                {name = "💎 Best Streak", value = "```" .. tostring(Stats.BestWinStreak) .. "```", inline = true},
+                {name = "📦 Cycles Completed", value = "```" .. tostring(Stats.CyclesCompleted) .. "```", inline = true},
+                {name = "⏱️ Runtime", value = "```" .. formatRuntime(runtime) .. "```", inline = true},
+            },
+            footer = {
+                text = "Battle Farm | Cycle #" .. tostring(Stats.CyclesCompleted)
+            },
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+        }}
+    }
+
+    local success, err = pcall(function()
+        HttpService:PostAsync(
+            getgenv().Webhook,
+            HttpService:JSONEncode(payload),
+            Enum.HttpContentType.ApplicationJson
+        )
+    end)
+
+    if success then
+        print("[WEBHOOK] Stats sent successfully!")
+    else
+        warn("[WEBHOOK] Failed to send: " .. tostring(err))
+    end
+end
+
+-- ============ BATTLE FUNCTIONS ============
+local function startBattle()
+    Stats.TotalExecutions = Stats.TotalExecutions + 1
+    local success, err = pcall(function()
+        ReplicatedStorage.Events.RemoteFunction.StartBattle:InvokeServer(
+            "Chapter1",
+            10,
+            1,
+            1,
+            false,
+            {},
+            false,
+            1
+        )
+    end)
+    if not success then
+        warn("[BATTLE] Failed to start: " .. tostring(err))
+    end
+end
+
+local function spawnCannon()
+    pcall(function()
+        ReplicatedStorage.Events.RemoteFunction.PlayerSpawn:InvokeServer(
+            "Cannon",
+            {CameraPosition = Vector3.new(-20, 5, -14.864141464233)}
+        )
+    end)
+end
+
+local function spawnSlot6()
+    pcall(function()
+        ReplicatedStorage.Events.RemoteFunction.PlayerSpawn:InvokeServer("Slot6")
+    end)
+end
+
+-- ============ CANNON & SLOT6 SPAM (1.5s INTERVAL) ============
+local lastSpamTime = 0
+RunService.Heartbeat:Connect(function()
+    if tick() - lastSpamTime >= SPAM_INTERVAL then
+        lastSpamTime = tick()
+        spawnCannon()
+        spawnSlot6()
+    end
+end)
+
+-- ============ WIN OR LOSE HANDLER ============
+ReplicatedStorage.Events.RemoteEvents.WinOrLose.OnClientEvent:Connect(function(didWin, exp, ...)
+    Stats.BattlesCompleted = Stats.BattlesCompleted + 1
+
+    if didWin then
+        Stats.Wins = Stats.Wins + 1
+        Stats.WinStreak = Stats.WinStreak + 1
+        Stats.BestWinStreak = math.max(Stats.BestWinStreak, Stats.WinStreak)
+        
+        local expGained = exp or 0
+        Stats.TotalEXP = Stats.TotalEXP + expGained
+        currentCycleEXP = currentCycleEXP + expGained
+        table.insert(Stats.RecentEXP, expGained)
+        
+        if #Stats.RecentEXP > 50 then
+            table.remove(Stats.RecentEXP, 1)
+        end
+        
+        currentCycleWins = currentCycleWins + 1
+        
+        print(string.format("[WIN] +%.0f EXP | Cycle: %d/%d | Total: %.0f", 
+            expGained, currentCycleWins, TARGET_WINS_PER_CYCLE, Stats.TotalEXP))
+
+        if currentCycleWins >= TARGET_WINS_PER_CYCLE then
+            Stats.CyclesCompleted = Stats.CyclesCompleted + 1
+            print(string.format("[CYCLE] Completed #%d | EXP this cycle: %.0f", 
+                Stats.CyclesCompleted, currentCycleEXP))
+            
+            sendWebhook(currentCycleEXP)
+            
+            currentCycleWins = 0
+            currentCycleEXP = 0
+        end
+    else
+        Stats.Losses = Stats.Losses + 1
+        Stats.WinStreak = 0
+        
+        print(string.format("[LOSS] Cycle progress: %d/%d (continuing...)", 
+            currentCycleWins, TARGET_WINS_PER_CYCLE))
+    end
+
+    task.wait(0.5)
+    startBattle()
+end)
+
+-- ============ INITIAL START ============
+print("========================================")
+print("      BATTLE FARM SCRIPT STARTED        ")
+print("========================================")
+print("[INFO] Target wins per cycle: " .. TARGET_WINS_PER_CYCLE)
+print("[INFO] Spam interval: " .. SPAM_INTERVAL .. "s")
+print("[INFO] Webhook: " .. (getgenv().Webhook ~= "PASTE_YOUR_WEBHOOK_URL_HERE" and "SET" or "NOT SET"))
+print("========================================")
+
+spawnCannon()
+spawnSlot6()
+startBattle()

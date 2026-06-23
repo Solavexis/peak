@@ -230,36 +230,10 @@ end)
 
 -- ============ FAST REJOIN ============
 local function rejoin()
-    print("[REJOIN] Saving data and rejoining...")
-    
-    -- Force save stats to file before rejoining
+    print("[REJOIN] Rejoining game after cycle completion...")
     saveStats()
-    
-    -- Reset the running flag so the next instance can start
-    getgenv().ScriptRunning = false 
-    queueScript()
-    
-    -- Try executor built-in rejoin (fastest)
-    if _G.rejoin then
-        pcall(_G.rejoin)
-        return
-    end
-    if rejoin then
-        pcall(rejoin)
-        return
-    end
-    
-    -- TeleportToPlaceInstance (fast)
-    local success = pcall(function()
-        game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId, LP)
-    end)
-    
-    if not success then
-        -- Fallback
-        pcall(function()
-            game:GetService("TeleportService"):Teleport(game.PlaceId)
-        end)
-    end
+    task.wait(0.5)
+    game:GetService("TeleportService"):Teleport(game.PlaceId, LP)
 end
 
 -- ============ WIN OR LOSE HANDLER ============

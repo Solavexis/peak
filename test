@@ -1,17 +1,23 @@
--- ============ WEBHOOK CONFIG ============
-getgenv().Webhook = getgenv().Webhook or "PASTE_YOUR_WEBHOOK_URL_HERE"
-getgenv().FarmStats = getgenv().FarmStats or {
-    TotalExecutions = 0,
-    TotalEXP = 0,
-    Wins = 0,
-    Losses = 0,
-    BattlesCompleted = 0,
-    WinStreak = 0,
-    BestWinStreak = 0,
-    CyclesCompleted = 0,
-    RecentEXP = {},
-    StartTime = tick()
-}
+-- ============ ANTI-DOUBLE EXECUTE CHECK ============
+if getgenv().ScriptRunning then return end
+getgenv().ScriptRunning = true
+-- ================================================
+
+-- ============ PERSISTENT FILE CONFIG ============
+local WebhookFile = "battle_farm_webhook.txt"
+local StatsFile = "battle_farm_stats.json"
+
+-- Handle Webhook saving/loading
+if isfile(WebhookFile) then
+    getgenv().Webhook = readfile(WebhookFile)
+else
+    getgenv().Webhook = "PASTE_YOUR_WEBHOOK_URL_HERE"
+end
+
+-- If you change the webhook here or in the executor, it saves to file
+if getgenv().Webhook ~= "PASTE_YOUR_WEBHOOK_URL_HERE" then
+    pcall(writefile, WebhookFile, getgenv().Webhook)
+end
 -- ================================================
 
 local Players = game:GetService("Players")
@@ -28,7 +34,43 @@ print("[LOAD] Game fully loaded!")
 -- ============ CONFIGURATION ============
 local SPAM_INTERVAL = 1.5
 local TARGET_WINS_PER_CYCLE = 3
-local Stats = getgenv().FarmStats
+
+-- ============ LOAD STATS FROM FILE ============
+local Stats
+if isfile(StatsFile) then
+    local success, decoded = pcall(function()
+        return HttpService:JSONDecode(readfile(StatsFile))
+    end)
+    if success and type(decoded) == "table" then
+        Stats = decoded
+        print("[DATA] Loaded previous stats from file.")
+    else
+        -- File was corrupted or invalid, reset
+        Stats = nil
+    end
+end
+
+if not Stats then
+    Stats = {
+        TotalExecutions = 0,
+        TotalEXP = 0,
+        Wins = 0,
+        Losses = 0,
+        BattlesCompleted = 0,
+        WinStreak = 0,
+        BestWinStreak = 0,
+        CyclesCompleted = 0,
+        RecentEXP = {},
+        StartTime = tick()
+    }
+    print("[DATA] Created new stats file.")
+end
+
+local function saveStats()
+    pcall(function()
+        writefile(StatsFile, HttpService:JSONEncode(Stats))
+    end)
+end
 
 local currentCycleWins = 0
 local currentCycleEXP = 0
@@ -38,40 +80,15 @@ local function httpPost(url, body)
     local payload = type(body) == "table" and HttpService:JSONEncode(body) or body
     
     if syn and syn.request then
-        return syn.request({
-            Url = url,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = payload
-        })
+        return syn.request({Url = url, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = payload})
     elseif request then
-        return request({
-            Url = url,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = payload
-        })
+        return request({Url = url, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = payload})
     elseif http_request then
-        return http_request({
-            Url = url,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = payload
-        })
+        return http_request({Url = url, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = payload})
     elseif fluxus and fluxus.request then
-        return fluxus.request({
-            Url = url,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = payload
-        })
+        return fluxus.request({Url = url, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = payload})
     elseif http and http.request then
-        return http.request({
-            Url = url,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = payload
-        })
+        return http.request({Url = url, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = payload})
     else
         return {StatusCode = 200, Body = HttpService:PostAsync(url, payload, Enum.HttpContentType.ApplicationJson)}
     end
@@ -165,13 +182,8 @@ local function sendWebhook(cycleEXP)
         }}
     }
 
-    local success, response = pcall(httpPost, getgenv().Webhook, payload)
-
-    if success then
-        print("[WEBHOOK] Stats sent successfully!")
-    else
-        warn("[WEBHOOK] Failed to send: " .. tostring(response))
-    end
+    pcall(httpPost, getgenv().Webhook, payload)
+    print("[WEBHOOK] Stats sent!")
 end
 
 -- ============ BATTLE FUNCTIONS ============
@@ -216,12 +228,38 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- ============ REJOIN FUNCTION ============
+-- ============ FAST REJOIN ============
 local function rejoin()
-    print("[REJOIN] Rejoining game after cycle completion...")
+    print("[REJOIN] Saving data and rejoining...")
+    
+    -- Force save stats to file before rejoining
+    saveStats()
+    
+    -- Reset the running flag so the next instance can start
+    getgenv().ScriptRunning = false 
     queueScript()
-    task.wait(0.5)
-    game:GetService("TeleportService"):Teleport(game.PlaceId, LP)
+    
+    -- Try executor built-in rejoin (fastest)
+    if _G.rejoin then
+        pcall(_G.rejoin)
+        return
+    end
+    if rejoin then
+        pcall(rejoin)
+        return
+    end
+    
+    -- TeleportToPlaceInstance (fast)
+    local success = pcall(function()
+        game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId, LP)
+    end)
+    
+    if not success then
+        -- Fallback
+        pcall(function()
+            game:GetService("TeleportService"):Teleport(game.PlaceId)
+        end)
+    end
 end
 
 -- ============ WIN OR LOSE HANDLER ============
@@ -249,24 +287,21 @@ ReplicatedStorage.Events.RemoteEvents.WinOrLose.OnClientEvent:Connect(function(d
 
         if currentCycleWins >= TARGET_WINS_PER_CYCLE then
             Stats.CyclesCompleted = Stats.CyclesCompleted + 1
-            print(string.format("[CYCLE] Completed #%d | EXP this cycle: %.0f", 
+            print(string.format("[CYCLE] #%d complete | EXP: %.0f | Rejoining...", 
                 Stats.CyclesCompleted, currentCycleEXP))
             
             sendWebhook(currentCycleEXP)
-            
-            currentCycleWins = 0
-            currentCycleEXP = 0
-            
-            -- Rejoin after cycle
             rejoin()
             return
         end
     else
         Stats.Losses = Stats.Losses + 1
         Stats.WinStreak = 0
-        
-        print(string.format("[LOSS] Cycle progress: %d/%d (continuing...)", 
+        print(string.format("[LOSS] Cycle: %d/%d (continuing...)", 
             currentCycleWins, TARGET_WINS_PER_CYCLE))
+        
+        -- Save on loss too just in case you get stuck in a loss loop or game crashes
+        saveStats()
     end
 
     task.wait(0.5)
@@ -277,12 +312,12 @@ end)
 print("========================================")
 print("      BATTLE FARM SCRIPT STARTED        ")
 print("========================================")
-print("[INFO] Target wins per cycle: " .. TARGET_WINS_PER_CYCLE)
+print("[INFO] Target wins/cycle: " .. TARGET_WINS_PER_CYCLE)
 print("[INFO] Spam interval: " .. SPAM_INTERVAL .. "s")
 print("[INFO] Rejoin after cycle: ON")
 print("[INFO] Webhook: " .. (getgenv().Webhook ~= "PASTE_YOUR_WEBHOOK_URL_HERE" and "SET" or "NOT SET"))
-print("[INFO] Previous cycles: " .. tostring(Stats.CyclesCompleted))
-print("[INFO] Previous total EXP: " .. tostring(Stats.TotalEXP))
+print("[INFO] Saved Cycles: " .. tostring(Stats.CyclesCompleted))
+print("[INFO] Saved Total EXP: " .. tostring(Stats.TotalEXP))
 print("========================================")
 
 spawnCannon()

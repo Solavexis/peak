@@ -28,7 +28,7 @@ local RunService = game:GetService("RunService")
 
 -- ============ WAIT FOR GAME TO FULLY LOAD ============
 repeat task.wait() until game:IsLoaded()
-task.wait(1)
+task.wait(10)
 print("[LOAD] Game fully loaded!")
 
 -- ============ CONFIGURATION ============
@@ -294,6 +294,4 @@ print("[INFO] Saved Cycles: " .. tostring(Stats.CyclesCompleted))
 print("[INFO] Saved Total EXP: " .. tostring(Stats.TotalEXP))
 print("========================================")
 
-spawnCannon()
-spawnSlot6()
 startBattle()

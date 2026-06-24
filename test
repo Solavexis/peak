@@ -193,7 +193,7 @@ local function startBattle()
         ReplicatedStorage.Events.RemoteFunction.StartBattle:InvokeServer(
             "Chapter1",
             10,
-            1,
+            2,
             1,
             false,
             {},

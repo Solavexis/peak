@@ -59,7 +59,7 @@ local StageQueue = {
     {Chapter = "Chapter1", Stage = 10, Difficulty = 2, Stars = 1, WinsNeeded = 3}, -- Cycle 1: Stage 10 Normal 1★
     {Chapter = "Chapter1", Stage = 10, Difficulty = 2, Stars = 2, WinsNeeded = 3}, -- Cycle 2: Stage 10 Normal 2★
     {Chapter = "Chapter1", Stage = 10, Difficulty = 2, Stars = 3, WinsNeeded = 3}, -- Cycle 3: Stage 10 Normal 3★
-    {Chapter = "Chapter1", Stage = 30, Difficulty = 2, Stars = 1, WinsNeeded = 3}, -- Stage 30 Normal 1★
+    {Chapter = "Chapter1", Stage = 20, Difficulty = 2, Stars = 1, WinsNeeded = 3}, -- Stage 30 Normal 1★
 }
 
 local SPAM_INTERVAL = 1.5

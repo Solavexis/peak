@@ -31,10 +31,395 @@ repeat task.wait() until game:IsLoaded()
 task.wait(10)
 print("[LOAD] Game fully loaded!")
 
--- ============ CONFIGURATION ============
-local SPAM_INTERVAL = 1.5
-local TARGET_WINS_PER_CYCLE = 3
+-- ============ STAGE QUEUE CONFIGURATION ============
+-- Stage 10 Normal 1-3 stars (3 cycles of 3 wins each), then Stage 30 Normal 1 star (3 wins)
+local StageQueue = {
+    {Chapter = "Chapter1", Stage = 10, Difficulty = 2, Stars = 1, WinsNeeded = 3}, -- Cycle 1: Stage 10 Normal 1★
+    {Chapter = "Chapter1", Stage = 10, Difficulty = 2, Stars = 2, WinsNeeded = 3}, -- Cycle 2: Stage 10 Normal 2★
+    {Chapter = "Chapter1", Stage = 10, Difficulty = 2, Stars = 3, WinsNeeded = 3}, -- Cycle 3: Stage 10 Normal 3★
+    {Chapter = "Chapter1", Stage = 30, Difficulty = 2, Stars = 1, WinsNeeded = 3}, -- Stage 30 Normal 1★
+}
 
+local SPAM_INTERVAL = 1.5
+local currentStageIndex = 1
+local currentStageWins = 0
+local currentStageEXP = 0
+local allStagesComplete = false
+
+-- ============ LOAD STATS FROM FILE ============
+local Stats
+if isfile(StatsFile) then
+    local success, decoded = pcall(function()
+        return HttpService:JSONDecode(readfile(StatsFile))
+    end)
+    if success and type(decoded) == "table" then
+        Stats = decoded
+        -- Restore stage progress if saved
+        if Stats.CurrentStageIndex and Stats.CurrentStageIndex <= #StageQueue then
+            currentStageIndex = Stats.CurrentStageIndex
+            currentStageWins = Stats.CurrentStageWins or 0
+            currentStageEXP = Stats.CurrentStageEXP or 0
+            print(string.format("[DATA] Resuming from Stage %d, %d/%d wins", 
+                currentStageIndex, currentStageWins, StageQueue[currentStageIndex].WinsNeeded))
+        end
+        print("[DATA] Loaded previous stats from file.")
+    else
+        Stats = nil
+    end
+end
+
+if not Stats then
+    Stats = {
+        TotalExecutions = 0,
+        TotalEXP = 0,
+        Wins = 0,
+        Losses = 0,
+        BattlesCompleted = 0,
+        WinStreak = 0,
+        BestWinStreak = 0,
+        CyclesCompleted = 0,
+        RecentEXP = {},
+        StartTime = tick(),
+        CurrentStageIndex = 1,
+        CurrentStageWins = 0,
+        CurrentStageEXP = 0
+    }
+    print("[DATA] Created new stats file.")
+end
+
+local function saveStats()
+    Stats.CurrentStageIndex = currentStageIndex
+    Stats.CurrentStageWins = currentStageWins
+    Stats.CurrentStageEXP = currentStageEXP
+    pcall(function()
+        writefile(StatsFile, HttpService:JSONEncode(Stats))
+    end)
+end
+
+-- ============ HTTP REQUEST FUNCTION ============
+local function httpPost(url, body)
+    local payload = type(body) == "table" and HttpService:JSONEncode(body) or body
+    
+    if syn and syn.request then
+        return syn.request({Url = url, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = payload})
+    elseif request then
+        return request({Url = url, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = payload})
+    elseif http_request then
+        return http_request({Url = url, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = payload})
+    elseif fluxus and fluxus.request then
+        return fluxus.request({Url = url, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = payload})
+    elseif http and http.request then
+        return http.request({Url = url, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = payload})
+    else
+        return {StatusCode = 200, Body = HttpService:PostAsync(url, payload, Enum.HttpContentType.ApplicationJson)}
+    end
+end
+
+-- ============ QUEUE SCRIPT ON TELEPORT ============
+local function queueScript()
+    local url = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/test"
+    local code = 'loadstring(game:HttpGet("'..url..'"))()'
+    if syn and syn.queue_on_teleport then
+        syn.queue_on_teleport(code)
+    elseif queue_on_teleport then
+        queue_on_teleport(code)
+    end
+end
+queueScript()
+
+-- ============ ANTI-IDLE ============
+LP.Idled:Connect(function()
+    VirtualUser:CaptureController()
+    VirtualUser:ClickButton2(Vector2.new())
+end)
+
+-- ============ UTILITY FUNCTIONS ============
+local function getAverageEXP()
+    if #Stats.RecentEXP == 0 then return 0 end
+    local sum = 0
+    for _, exp in ipairs(Stats.RecentEXP) do
+        sum = sum + exp
+    end
+    return math.floor(sum / #Stats.RecentEXP)
+end
+
+local function formatRuntime(seconds)
+    local hours = math.floor(seconds / 3600)
+    local minutes = math.floor((seconds % 3600) / 60)
+    local secs = math.floor(seconds % 60)
+    return string.format("%02d:%02d:%02d", hours, minutes, secs)
+end
+
+local function getWinRate()
+    if Stats.BattlesCompleted == 0 then return "0%" end
+    return string.format("%.1f%%", (Stats.Wins / Stats.BattlesCompleted) * 100)
+end
+
+local function getEXPPerHour()
+    local runtime = tick() - Stats.StartTime
+    if runtime < 60 then return 0 end
+    return math.floor((Stats.TotalEXP / runtime) * 3600)
+end
+
+local function getCurrentStageInfo()
+    if currentStageIndex > #StageQueue then return nil end
+    return StageQueue[currentStageIndex]
+end
+
+local function getStarsDisplay(stars)
+    return string.rep("★", stars) .. string.rep("☆", 3 - stars)
+end
+
+-- ============ DISCORD WEBHOOK SENDER ============
+local function sendWebhook(stageEXP, stageConfig)
+    if not getgenv().Webhook or getgenv().Webhook == "PASTE_YOUR_WEBHOOK_URL_HERE" then
+        warn("[WEBHOOK] URL not set! Skipping webhook...")
+        return
+    end
+
+    local runtime = tick() - Stats.StartTime
+    local avgEXP = getAverageEXP()
+    local expPerHour = getEXPPerHour()
+    local winRate = getWinRate()
+    local stageProgress = string.format("%d/%d", currentStageIndex, #StageQueue)
+
+    local payload = {
+        username = "Battle Farm Logger",
+        avatar_url = "https://i.imgur.com/JR8kF0C.png",
+        embeds = {{
+            title = "📊 Stage Farm Statistics",
+            description = string.format("**Player:** `%s`\n**Place Id:** `%s`", LP.Name, game.PlaceId),
+            color = 0x00FF88,
+            fields = {
+                {name = "📍 Current Stage", value = string.format("```%s Stage %d | %s | %s```", 
+                    stageConfig.Chapter, stageConfig.Stage, "Normal", getStarsDisplay(stageConfig.Stars)), inline = false},
+                {name = "📋 Stage Progress", value = string.format("```%s (%d of %d)```", 
+                    stageProgress, currentStageIndex, #StageQueue), inline = true},
+                {name = "🎮 Total Executions", value = "```" .. tostring(Stats.TotalExecutions) .. "```", inline = true},
+                {name = "🏆 Total Wins", value = "```" .. tostring(Stats.Wins) .. "```", inline = true},
+                {name = "💀 Total Losses", value = "```" .. tostring(Stats.Losses) .. "```", inline = true},
+                {name = "📈 Win Rate", value = "```" .. winRate .. "```", inline = true},
+                {name = "⭐ Overall EXP", value = "```" .. tostring(Stats.TotalEXP) .. "```", inline = true},
+                {name = "💰 EXP/Hour", value = "```" .. tostring(expPerHour) .. "```", inline = true},
+                {name = "📊 Avg EXP/Win", value = "```" .. tostring(avgEXP) .. "```", inline = true},
+                {name = "✨ This Stage EXP", value = "```" .. tostring(stageEXP) .. "```", inline = true},
+                {name = "🔥 Current Streak", value = "```" .. tostring(Stats.WinStreak) .. "```", inline = true},
+                {name = "💎 Best Streak", value = "```" .. tostring(Stats.BestWinStreak) .. "```", inline = true},
+                {name = "📦 Stages Completed", value = "```" .. tostring(Stats.CyclesCompleted) .. "```", inline = true},
+                {name = "⏱️ Runtime", value = "```" .. formatRuntime(runtime) .. "```", inline = true},
+            },
+            footer = {
+                text = "Stage Farm | Progress: " .. stageProgress
+            },
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+        }}
+    }
+
+    pcall(httpPost, getgenv().Webhook, payload)
+    print("[WEBHOOK] Stats sent!")
+end
+
+local function sendCompletionWebhook()
+    if not getgenv().Webhook or getgenv().Webhook == "PASTE_YOUR_WEBHOOK_URL_HERE" then
+        return
+    end
+
+    local runtime = tick() - Stats.StartTime
+    
+    local payload = {
+        username = "Battle Farm Logger",
+        avatar_url = "https://i.imgur.com/JR8kF0C.png",
+        embeds = {{
+            title = "✅ ALL STAGES COMPLETE!",
+            description = string.format("**Player:** `%s`\n**All queued stages have been farmed!**", LP.Name),
+            color = 0xFFD700,
+            fields = {
+                {name = "⭐ Total EXP Gained", value = "```" .. tostring(Stats.TotalEXP) .. "```", inline = true},
+                {name = "🏆 Total Wins", value = "```" .. tostring(Stats.Wins) .. "```", inline = true},
+                {name = "💀 Total Losses", value = "```" .. tostring(Stats.Losses) .. "```", inline = true},
+                {name = "📈 Win Rate", value = "```" .. getWinRate() .. "```", inline = true},
+                {name = "💰 EXP/Hour", value = "```" .. tostring(getEXPPerHour()) .. "```", inline = true},
+                {name = "⏱️ Total Runtime", value = "```" .. formatRuntime(runtime) .. "```", inline = true},
+                {name = "💎 Best Win Streak", value = "```" .. tostring(Stats.BestWinStreak) .. "```", inline = true},
+            },
+            footer = {
+                text = "Stage Farm | COMPLETED"
+            },
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+        }}
+    }
+
+    pcall(httpPost, getgenv().Webhook, payload)
+    print("[WEBHOOK] Completion notification sent!")
+end
+
+-- ============ BATTLE FUNCTIONS ============
+local function startBattle()
+    local stageConfig = getCurrentStageInfo()
+    if not stageConfig then
+        print("[BATTLE] No more stages to farm!")
+        return
+    end
+
+    Stats.TotalExecutions = Stats.TotalExecutions + 1
+    print(string.format("[BATTLE] Starting %s Stage %d | Normal | %s", 
+        stageConfig.Chapter, stageConfig.Stage, getStarsDisplay(stageConfig.Stars)))
+    
+    pcall(function()
+        ReplicatedStorage.Events.RemoteFunction.StartBattle:InvokeServer(
+            stageConfig.Chapter,
+            stageConfig.Stage,
+            stageConfig.Difficulty,
+            stageConfig.Stars,
+            false,
+            {},
+            false,
+            1
+        )
+    end)
+end
+
+local function spawnCannon()
+    pcall(function()
+        ReplicatedStorage.Events.RemoteFunction.PlayerSpawn:InvokeServer(
+            "Cannon",
+            {CameraPosition = Vector3.new(-20, 5, -14.864141464233)}
+        )
+    end)
+end
+
+local function spawnSlot6()
+    pcall(function()
+        ReplicatedStorage.Events.RemoteFunction.PlayerSpawn:InvokeServer("Slot6")
+    end)
+end
+
+-- ============ CANNON & SLOT6 SPAM (1.5s INTERVAL) ============
+local lastSpamTime = 0
+RunService.Heartbeat:Connect(function()
+    if tick() - lastSpamTime >= SPAM_INTERVAL then
+        lastSpamTime = tick()
+        spawnCannon()
+        spawnSlot6()
+    end
+end)
+
+-- ============ FAST REJOIN ============
+local function rejoin()
+    print("[REJOIN] Rejoining game to continue farming...")
+    saveStats()
+    task.wait(0.5)
+    game:GetService("TeleportService"):Teleport(game.PlaceId, LP)
+end
+
+-- ============ ADVANCE TO NEXT STAGE ============
+local function advanceToNextStage()
+    local completedStage = StageQueue[currentStageIndex]
+    print(string.format("[STAGE] Completed %s Stage %d | %s | EXP: %.0f", 
+        completedStage.Chapter, completedStage.Stage, getStarsDisplay(completedStage.Stars), currentStageEXP))
+    
+    sendWebhook(currentStageEXP, completedStage)
+    Stats.CyclesCompleted = Stats.CyclesCompleted + 1
+    
+    currentStageIndex = currentStageIndex + 1
+    currentStageWins = 0
+    currentStageEXP = 0
+    
+    if currentStageIndex > #StageQueue then
+        allStagesComplete = true
+        print("========================================")
+        print("   ✅ ALL STAGES COMPLETE! ✅")
+        print("========================================")
+        sendCompletionWebhook()
+        
+        -- Reset for next run if script is re-executed
+        Stats.CurrentStageIndex = 1
+        Stats.CurrentStageWins = 0
+        Stats.CurrentStageEXP = 0
+        saveStats()
+        return
+    end
+    
+    local nextStage = StageQueue[currentStageIndex]
+    print(string.format("[NEXT] Moving to %s Stage %d | %s | Need %d wins", 
+        nextStage.Chapter, nextStage.Stage, getStarsDisplay(nextStage.Stars), nextStage.WinsNeeded))
+    
+    saveStats()
+    rejoin()
+end
+
+-- ============ WIN OR LOSE HANDLER ============
+ReplicatedStorage.Events.RemoteEvents.WinOrLose.OnClientEvent:Connect(function(didWin, exp, ...)
+    if allStagesComplete then return end
+    
+    local stageConfig = getCurrentStageInfo()
+    if not stageConfig then return end
+    
+    Stats.BattlesCompleted = Stats.BattlesCompleted + 1
+
+    if didWin then
+        Stats.Wins = Stats.Wins + 1
+        Stats.WinStreak = Stats.WinStreak + 1
+        Stats.BestWinStreak = math.max(Stats.BestWinStreak, Stats.WinStreak)
+        
+        local expGained = exp or 0
+        Stats.TotalEXP = Stats.TotalEXP + expGained
+        currentStageEXP = currentStageEXP + expGained
+        table.insert(Stats.RecentEXP, expGained)
+        
+        if #Stats.RecentEXP > 50 then
+            table.remove(Stats.RecentEXP, 1)
+        end
+        
+        currentStageWins = currentStageWins + 1
+        
+        print(string.format("[WIN] +%.0f EXP | Stage %d/%d | %d/%d wins | Total: %.0f", 
+            expGained, currentStageIndex, #StageQueue, currentStageWins, stageConfig.WinsNeeded, Stats.TotalEXP))
+
+        if currentStageWins >= stageConfig.WinsNeeded then
+            advanceToNextStage()
+            return
+        end
+    else
+        Stats.Losses = Stats.Losses + 1
+        Stats.WinStreak = 0
+        print(string.format("[LOSS] Stage %d/%d | %d/%d wins (continuing...)", 
+            currentStageIndex, #StageQueue, currentStageWins, stageConfig.WinsNeeded))
+        
+        saveStats()
+    end
+
+    task.wait(0.5)
+    startBattle()
+end)
+
+-- ============ INITIAL START ============
+print("========================================")
+print("      STAGE FARM SCRIPT STARTED        ")
+print("========================================")
+print("[INFO] === STAGE QUEUE ===")
+for i, stage in ipairs(StageQueue) do
+    local marker = i == currentStageIndex and " ◄ CURRENT" or ""
+    print(string.format("[INFO] %d. %s Stage %d | Normal | %s | %d wins%s", 
+        i, stage.Chapter, stage.Stage, getStarsDisplay(stage.Stars), stage.WinsNeeded, marker))
+end
+print("========================================")
+print("[INFO] Spam interval: " .. SPAM_INTERVAL .. "s")
+print("[INFO] Rejoin between stages: ON")
+print("[INFO] Webhook: " .. (getgenv().Webhook ~= "PASTE_YOUR_WEBHOOK_URL_HERE" and "SET" or "NOT SET"))
+print("[INFO] Stages Completed: " .. tostring(Stats.CyclesCompleted))
+print("[INFO] Total EXP: " .. tostring(Stats.TotalEXP))
+print("========================================")
+
+if allStagesComplete then
+    print("[INFO] All stages already complete! Resetting...")
+    allStagesComplete = false
+    currentStageIndex = 1
+    currentStageWins = 0
+    currentStageEXP = 0
+end
+
+startBattle()
 -- ============ LOAD STATS FROM FILE ============
 local Stats
 if isfile(StatsFile) then

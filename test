@@ -535,7 +535,7 @@ local function sendWebhook(stageEXP, stageConfig)
             },
             footer = { text = "Stage Farm | Progress: " .. stageProgress },
             timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
-        }}
+        }
     }
 
     pcall(httpPost, getgenv().Webhook, payload)

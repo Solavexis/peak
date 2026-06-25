@@ -337,6 +337,7 @@ local function advanceToNextStage()
         Stats.CurrentStageWins = 0
         Stats.CurrentStageEXP = 0
         saveStats()
+        rejoin()
         return
     end
     
@@ -345,7 +346,6 @@ local function advanceToNextStage()
         nextStage.Chapter, nextStage.Stage, getStarsDisplay(nextStage.Stars), nextStage.WinsNeeded))
     
     saveStats()
-    rejoin()
 end
 
 -- ============ WIN OR LOSE HANDLER ============

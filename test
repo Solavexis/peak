@@ -6,16 +6,15 @@ getgenv().ScriptRunning = true
 -- ============ PERSISTENT FILE CONFIG ============
 local WebhookFile = "battle_farm_webhook.txt"
 local StatsFile = "battle_farm_stats.json"
+local ConfigFile = "battle_farm_config.json"
 
 -- ============ WEBHOOK LOADING (getgenv takes priority) ============
 local webhookLoaded = false
 
--- First check if webhook is already set in getgenv
 if getgenv().Webhook and getgenv().Webhook ~= "PASTE_YOUR_WEBHOOK_URL_HERE" then
     print("[WEBHOOK] Using webhook from getgenv()")
     webhookLoaded = true
 else
-    -- Then check file
     if isfile(WebhookFile) then
         local fileWebhook = readfile(WebhookFile)
         if fileWebhook and fileWebhook ~= "PASTE_YOUR_WEBHOOK_URL_HERE" then
@@ -31,7 +30,6 @@ if not webhookLoaded then
     print("[WEBHOOK] No webhook set, using placeholder")
 end
 
--- Save webhook to file if it's valid
 if getgenv().Webhook ~= "PASTE_YOUR_WEBHOOK_URL_HERE" then
     pcall(writefile, WebhookFile, getgenv().Webhook)
 end
@@ -53,14 +51,31 @@ print("[LOAD] Game fully loaded!")
 -- ============ TIMING TRACKING ============
 local serverJoinTime = tick()
 
--- ============ STAGE QUEUE CONFIGURATION ============
--- Runs all stages without rejoining, only rejoins when entire queue is complete
-local StageQueue = {
-    {Chapter = "Chapter1", Stage = 10, Difficulty = 2, Stars = 1, WinsNeeded = 3}, -- Cycle 1: Stage 10 Normal 1★
-    {Chapter = "Chapter1", Stage = 10, Difficulty = 2, Stars = 2, WinsNeeded = 3}, -- Cycle 2: Stage 10 Normal 2★
-    {Chapter = "Chapter1", Stage = 10, Difficulty = 2, Stars = 3, WinsNeeded = 3}, -- Cycle 3: Stage 10 Normal 3★
-    {Chapter = "Chapter1", Stage = 20, Difficulty = 2, Stars = 1, WinsNeeded = 3}, -- Stage 30 Normal 1★
+-- ============ DEFAULT STAGE QUEUE CONFIGURATION ============
+local DefaultStageQueue = {
+    {Chapter = "Chapter1", Stage = 10, Difficulty = 2, Stars = 3, WinsNeeded = 3, UseCannon = true, UseBank = false, SpamSlots = {"Slot6"}},
+    {Chapter = "Chapter1", Stage = 20, Difficulty = 2, Stars = 1, WinsNeeded = 3, UseCannon = true, UseBank = false, SpamSlots = {"Slot6"}},
+    {Chapter = "Chapter2", Stage = 10, Difficulty = 2, Stars = 1, WinsNeeded = 3, UseCannon = true, UseBank = true, SpamSlots = {"Slot7"}},
 }
+
+-- ============ LOAD/SAVE CUSTOM CONFIG ============
+local StageQueue = DefaultStageQueue
+
+local function saveConfig()
+    pcall(function()
+        writefile(ConfigFile, HttpService:JSONEncode(StageQueue))
+    end)
+end
+
+if isfile(ConfigFile) then
+    local success, decoded = pcall(function()
+        return HttpService:JSONDecode(readfile(ConfigFile))
+    end)
+    if success and type(decoded) == "table" and #decoded > 0 then
+        StageQueue = decoded
+        print("[CONFIG] Loaded custom stage configuration.")
+    end
+end
 
 local SPAM_INTERVAL = 1.5
 local currentStageIndex = 1
@@ -76,7 +91,6 @@ if isfile(StatsFile) then
     end)
     if success and type(decoded) == "table" then
         Stats = decoded
-        -- Restore stage progress if saved
         if Stats.CurrentStageIndex and Stats.CurrentStageIndex <= #StageQueue then
             currentStageIndex = Stats.CurrentStageIndex
             currentStageWins = Stats.CurrentStageWins or 0
@@ -84,7 +98,6 @@ if isfile(StatsFile) then
             print(string.format("[DATA] Resuming from Stage %d, %d/%d wins", 
                 currentStageIndex, currentStageWins, StageQueue[currentStageIndex].WinsNeeded))
         end
-        -- Ensure OverallStartTime exists
         if not Stats.OverallStartTime then
             Stats.OverallStartTime = tick()
         end
@@ -196,13 +209,8 @@ local function getStarsDisplay(stars)
     return string.rep("★", stars) .. string.rep("☆", 3 - stars)
 end
 
-local function getServerRuntime()
-    return tick() - serverJoinTime
-end
-
-local function getOverallRuntime()
-    return tick() - Stats.OverallStartTime
-end
+local function getServerRuntime() return tick() - serverJoinTime end
+local function getOverallRuntime() return tick() - Stats.OverallStartTime end
 
 -- ============ RESET DATA FUNCTION ============
 local function resetData()
@@ -210,107 +218,281 @@ local function resetData()
     currentStageIndex = 1
     currentStageWins = 0
     currentStageEXP = 0
-    
     Stats = {
-        TotalExecutions = 0,
-        TotalEXP = 0,
-        Wins = 0,
-        Losses = 0,
-        BattlesCompleted = 0,
-        WinStreak = 0,
-        BestWinStreak = 0,
-        CyclesCompleted = 0,
-        RecentEXP = {},
-        OverallStartTime = tick(),
-        CurrentStageIndex = 1,
-        CurrentStageWins = 0,
-        CurrentStageEXP = 0
+        TotalExecutions = 0, TotalEXP = 0, Wins = 0, Losses = 0,
+        BattlesCompleted = 0, WinStreak = 0, BestWinStreak = 0,
+        CyclesCompleted = 0, RecentEXP = {}, OverallStartTime = tick(),
+        CurrentStageIndex = 1, CurrentStageWins = 0, CurrentStageEXP = 0
     }
-    
     saveStats()
     print("[RESET] All data has been reset!")
 end
 
--- ============ CREATE RESET BUTTON GUI ============
-local function createResetButton()
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "ResetDataGUI"
-    screenGui.ResetOnSpawn = false
-    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    
-    pcall(function()
-        screenGui.Parent = GuiService
-    end)
-    if not screenGui.Parent then
-        screenGui.Parent = LP.PlayerGui
-    end
-    
-    local button = Instance.new("TextButton")
-    button.Name = "ResetButton"
-    button.Size = UDim2.new(0, 80, 0, 24)
-    button.Position = UDim2.new(1, -90, 0, 10)
-    button.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    button.BorderSizePixel = 0
-    button.Text = "Reset Data"
-    button.TextColor3 = Color3.fromRGB(200, 200, 200)
-    button.TextSize = 11
-    button.Font = Enum.Font.GothamBold
-    button.AutoButtonColor = true
-    
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 6)
-    corner.Parent = button
-    
-    local stroke = Instance.new("UIStroke")
-    stroke.Color = Color3.fromRGB(80, 80, 80)
-    stroke.Thickness = 1
-    stroke.Parent = button
-    
-    button.Parent = screenGui
-    
-    local confirming = false
-    local confirmTime = 0
-    
-    button.MouseButton1Click:Connect(function()
-        if confirming then
-            if tick() - confirmTime <= 3 then
-                resetData()
-                button.Text = "Reset Data"
-                button.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-                confirming = false
-            else
-                confirming = false
-                button.Text = "Reset Data"
-                button.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+-- ============ GUI CREATION ============
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "FarmConfigGUI"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+pcall(function() screenGui.Parent = GuiService end)
+if not screenGui.Parent then screenGui.Parent = LP.PlayerGui end
+
+-- Main Frame
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 220, 0, 30)
+mainFrame.Position = UDim2.new(1, -230, 0, 10)
+mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+mainFrame.BorderSizePixel = 0
+mainFrame.Parent = screenGui
+
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 6)
+mainCorner.Parent = mainFrame
+
+local mainStroke = Instance.new("UIStroke")
+mainStroke.Color = Color3.fromRGB(60, 60, 60)
+mainStroke.Thickness = 1
+mainStroke.Parent = mainFrame
+
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Name = "ToggleBtn"
+toggleBtn.Size = UDim2.new(1, 0, 1, 0)
+toggleBtn.BackgroundTransparency = 1
+toggleBtn.Text = "⚙️ Farm Config"
+toggleBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+toggleBtn.TextSize = 13
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.Parent = mainFrame
+
+-- Dropdown Container
+local dropFrame = Instance.new("Frame")
+dropFrame.Name = "DropFrame"
+dropFrame.Size = UDim2.new(0, 220, 0, 0)
+dropFrame.Position = UDim2.new(0, 0, 1, 5)
+dropFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+dropFrame.BorderSizePixel = 0
+dropFrame.ClipsDescendants = true
+dropFrame.Visible = false
+dropFrame.Parent = mainFrame
+
+local dropCorner = Instance.new("UICorner")
+dropCorner.CornerRadius = UDim.new(0, 6)
+dropCorner.Parent = dropFrame
+
+local dropStroke = Instance.new("UIStroke")
+dropStroke.Color = Color3.fromRGB(60, 60, 60)
+dropStroke.Thickness = 1
+dropStroke.Parent = dropFrame
+
+local dropLayout = Instance.new("UIListLayout")
+dropLayout.SortOrder = Enum.SortOrder.LayoutOrder
+dropLayout.Padding = UDim.new(0, 5)
+dropLayout.Parent = dropFrame
+
+local dropPadding = Instance.new("UIPadding")
+dropPadding.PaddingTop = UDim.new(0, 10)
+dropPadding.PaddingBottom = UDim.new(0, 10)
+dropPadding.PaddingLeft = UDim.new(0, 10)
+dropPadding.PaddingRight = UDim.new(0, 10)
+dropPadding.Parent = dropFrame
+
+-- Reset Stats Button
+local resetBtn = Instance.new("TextButton")
+resetBtn.Size = UDim2.new(1, 0, 0, 25)
+resetBtn.BackgroundColor3 = Color3.fromRGB(120, 30, 30)
+resetBtn.BorderSizePixel = 0
+resetBtn.Text = "Reset Stats"
+resetBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+resetBtn.TextSize = 11
+resetBtn.Font = Enum.Font.GothamBold
+resetBtn.LayoutOrder = 100
+resetBtn.Parent = dropFrame
+
+local resetCorner = Instance.new("UICorner")
+resetCorner.CornerRadius = UDim.new(0, 4)
+resetCorner.Parent = resetBtn
+
+local confirmingReset = false
+resetBtn.MouseButton1Click:Connect(function()
+    if confirmingReset then
+        resetData()
+        resetBtn.Text = "Reset Stats"
+        resetBtn.BackgroundColor3 = Color3.fromRGB(120, 30, 30)
+        confirmingReset = false
+    else
+        confirmingReset = true
+        resetBtn.Text = "Click Again to Confirm"
+        task.delay(3, function()
+            if confirmingReset then
+                confirmingReset = false
+                resetBtn.Text = "Reset Stats"
+                resetBtn.BackgroundColor3 = Color3.fromRGB(120, 30, 30)
             end
-        else
-            confirming = true
-            confirmTime = tick()
-            button.Text = "Confirm?"
-            button.BackgroundColor3 = Color3.fromRGB(120, 30, 30)
-            
-            -- Auto-reset confirm state after 3 seconds
-            task.delay(3, function()
-                if confirming and button and button.Parent then
-                    confirming = false
-                    button.Text = "Reset Data"
-                    button.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-                end
-            end)
+        end)
+    end
+end)
+
+-- Toggle UI
+local isOpen = false
+toggleBtn.MouseButton1Click:Connect(function()
+    isOpen = not isOpen
+    dropFrame.Visible = isOpen
+    if isOpen then
+        dropFrame:TweenSize(UDim2.new(0, 220, 0, #StageQueue * 95 + 40), Enum.EasingDirection.Out, Enum.EasingStyle.Quart, 0.2, true)
+    else
+        dropFrame:TweenSize(UDim2.new(0, 220, 0, 0), Enum.EasingDirection.In, Enum.EasingStyle.Quart, 0.2, true)
+    end
+end)
+
+-- Function to create stage UI
+local function createStageUI(index, data)
+    local sf = Instance.new("Frame")
+    sf.Size = UDim2.new(1, 0, 0, 90)
+    sf.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    sf.BorderSizePixel = 0
+    sf.LayoutOrder = index
+    sf.Parent = dropFrame
+
+    local sfCorner = Instance.new("UICorner")
+    sfCorner.CornerRadius = UDim.new(0, 4)
+    sfCorner.Parent = sf
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 18)
+    title.BackgroundTransparency = 1
+    title.Text = string.format("Stage %d | %s | %d Wins", data.Stage, getStarsDisplay(data.Stars), data.WinsNeeded)
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.TextSize = 11
+    title.Font = Enum.Font.GothamBold
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = sf
+
+    local function createToggle(posX, default, callback)
+        local box = Instance.new("TextButton")
+        box.Size = UDim2.new(0, 16, 0, 16)
+        box.Position = UDim2.new(posX, 0, 0, 24)
+        box.BackgroundColor3 = default and Color3.fromRGB(0, 180, 100) or Color3.fromRGB(80, 80, 80)
+        box.Text = ""
+        box.BorderSizePixel = 0
+        box.Parent = sf
+        Instance.new("UICorner", box).CornerRadius = UDim.new(0, 3)
+        
+        local state = default
+        box.MouseButton1Click:Connect(function()
+            state = not state
+            box.BackgroundColor3 = state and Color3.fromRGB(0, 180, 100) or Color3.fromRGB(80, 80, 80)
+            callback(state)
+            saveConfig()
+        end)
+    end
+
+    local lbl1 = Instance.new("TextLabel")
+    lbl1.Size = UDim2.new(0, 50, 0, 16)
+    lbl1.Position = UDim2.new(0, 0, 0, 24)
+    lbl1.BackgroundTransparency = 1
+    lbl1.Text = "Cannon"
+    lbl1.TextColor3 = Color3.fromRGB(180, 180, 180)
+    lbl1.TextSize = 9
+    lbl1.Font = Enum.Font.Gotham
+    lbl1.TextXAlignment = Enum.TextXAlignment.Right
+    lbl1.Parent = sf
+
+    createToggle(0.25, data.UseCannon, function(v) StageQueue[index].UseCannon = v end)
+
+    local lbl2 = Instance.new("TextLabel")
+    lbl2.Size = UDim2.new(0, 40, 0, 16)
+    lbl2.Position = UDim2.new(0.4, 0, 0, 24)
+    lbl2.BackgroundTransparency = 1
+    lbl2.Text = "Bank"
+    lbl2.TextColor3 = Color3.fromRGB(180, 180, 180)
+    lbl2.TextSize = 9
+    lbl2.Font = Enum.Font.Gotham
+    lbl2.TextXAlignment = Enum.TextXAlignment.Right
+    lbl2.Parent = sf
+
+    createToggle(0.6, data.UseBank, function(v) StageQueue[index].UseBank = v end)
+
+    local slotsLabel = Instance.new("TextLabel")
+    slotsLabel.Size = UDim2.new(0, 30, 0, 14)
+    slotsLabel.Position = UDim2.new(0, 0, 0, 44)
+    slotsLabel.BackgroundTransparency = 1
+    slotsLabel.Text = "Slots:"
+    slotsLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+    slotsLabel.TextSize = 9
+    slotsLabel.Font = Enum.Font.Gotham
+    slotsLabel.TextXAlignment = Enum.TextXAlignment.Left
+    slotsLabel.Parent = sf
+
+    local slotInput = Instance.new("TextBox")
+    slotInput.Size = UDim2.new(1, -35, 0, 14)
+    slotInput.Position = UDim2.new(0, 35, 0, 44)
+    slotInput.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    slotInput.BorderSizePixel = 0
+    slotInput.Text = table.concat(data.SpamSlots, ", ")
+    slotInput.TextColor3 = Color3.fromRGB(220, 220, 220)
+    slotInput.TextSize = 9
+    slotInput.Font = Enum.Font.Gotham
+    slotInput.PlaceholderText = "e.g. Slot1, Slot6"
+    slotInput.Parent = sf
+    Instance.new("UICorner", slotInput).CornerRadius = UDim.new(0, 3)
+
+    slotInput.FocusLost:Connect(function()
+        local parts = {}
+        for str in string.gmatch(slotInput.Text, "([^,]+)") do
+            local trimmed = string.gsub(str, "^%s*(.-)%s*$", "%1")
+            if trimmed ~= "" then table.insert(parts, trimmed) end
         end
+        StageQueue[index].SpamSlots = parts
+        saveConfig()
     end)
-    
-    return screenGui
+
+    -- Add Slot Button
+    local addBtn = Instance.new("TextButton")
+    addBtn.Size = UDim2.new(0, 50, 0, 18)
+    addBtn.Position = UDim2.new(0, 0, 0, 64)
+    addBtn.BackgroundColor3 = Color3.fromRGB(0, 100, 200)
+    addBtn.Text = "+ Slot"
+    addBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    addBtn.TextSize = 9
+    addBtn.Font = Enum.Font.GothamBold
+    addBtn.BorderSizePixel = 0
+    addBtn.Parent = sf
+    Instance.new("UICorner", addBtn).CornerRadius = UDim.new(0, 3)
+
+    addBtn.MouseButton1Click:Connect(function()
+        local newSlot = "Slot" .. tostring(#StageQueue[index].SpamSlots + 1)
+        table.insert(StageQueue[index].SpamSlots, newSlot)
+        slotInput.Text = table.concat(StageQueue[index].SpamSlots, ", ")
+        saveConfig()
+    end)
+
+    -- Clear Slots Button
+    local clrBtn = Instance.new("TextButton")
+    clrBtn.Size = UDim2.new(0, 60, 0, 18)
+    clrBtn.Position = UDim2.new(0, 55, 0, 64)
+    clrBtn.BackgroundColor3 = Color3.fromRGB(150, 40, 40)
+    clrBtn.Text = "Clear All"
+    clrBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    clrBtn.TextSize = 9
+    clrBtn.Font = Enum.Font.GothamBold
+    clrBtn.BorderSizePixel = 0
+    clrBtn.Parent = sf
+    Instance.new("UICorner", clrBtn).CornerRadius = UDim.new(0, 3)
+
+    clrBtn.MouseButton1Click:Connect(function()
+        StageQueue[index].SpamSlots = {}
+        slotInput.Text = ""
+        saveConfig()
+    end)
 end
 
-createResetButton()
+for i, stage in ipairs(StageQueue) do
+    createStageUI(i, stage)
+end
 
 -- ============ DISCORD WEBHOOK SENDER ============
 local function sendWebhook(stageEXP, stageConfig)
-    if not getgenv().Webhook or getgenv().Webhook == "PASTE_YOUR_WEBHOOK_URL_HERE" then
-        warn("[WEBHOOK] URL not set! Skipping webhook...")
-        return
-    end
+    if not getgenv().Webhook or getgenv().Webhook == "PASTE_YOUR_WEBHOOK_URL_HERE" then return end
 
     local serverRuntime = getServerRuntime()
     local overallRuntime = getOverallRuntime()
@@ -318,6 +500,11 @@ local function sendWebhook(stageEXP, stageConfig)
     local expPerHour = getEXPPerHour()
     local winRate = getWinRate()
     local stageProgress = string.format("%d/%d", currentStageIndex, #StageQueue)
+    
+    local features = {}
+    if stageConfig.UseCannon then table.insert(features, "Cannon") end
+    if stageConfig.UseBank then table.insert(features, "Bank") end
+    if #stageConfig.SpamSlots > 0 then table.insert(features, "Slots: " .. table.concat(stageConfig.SpamSlots, ", ")) end
 
     local payload = {
         username = "Battle Farm Logger",
@@ -329,8 +516,8 @@ local function sendWebhook(stageEXP, stageConfig)
             fields = {
                 {name = "📍 Current Stage", value = string.format("```%s Stage %d | %s | %s```", 
                     stageConfig.Chapter, stageConfig.Stage, "Normal", getStarsDisplay(stageConfig.Stars)), inline = false},
-                {name = "📋 Stage Progress", value = string.format("```%s (%d of %d)```", 
-                    stageProgress, currentStageIndex, #StageQueue), inline = true},
+                {name = "🔧 Features Used", value = "```%s```", #features > 0 and table.concat(features, " | ") or "None"}, inline = false},
+                {name = "📋 Stage Progress", value = string.format("```%s (%d of %d)```", stageProgress, currentStageIndex, #StageQueue), inline = true},
                 {name = "🎮 Total Executions", value = "```" .. tostring(Stats.TotalExecutions) .. "```", inline = true},
                 {name = "🏆 Total Wins", value = "```" .. tostring(Stats.Wins) .. "```", inline = true},
                 {name = "💀 Total Losses", value = "```" .. tostring(Stats.Losses) .. "```", inline = true},
@@ -346,9 +533,7 @@ local function sendWebhook(stageEXP, stageConfig)
                 {name = "⏱️ Overall Runtime", value = "```" .. formatRuntime(overallRuntime) .. "```", inline = true},
                 {name = "⏱️ Combined Runtime", value = "```" .. formatRuntime(serverRuntime + overallRuntime) .. "```", inline = true},
             },
-            footer = {
-                text = "Stage Farm | Progress: " .. stageProgress
-            },
+            footer = { text = "Stage Farm | Progress: " .. stageProgress },
             timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
         }}
     }
@@ -358,9 +543,7 @@ local function sendWebhook(stageEXP, stageConfig)
 end
 
 local function sendCompletionWebhook()
-    if not getgenv().Webhook or getgenv().Webhook == "PASTE_YOUR_WEBHOOK_URL_HERE" then
-        return
-    end
+    if not getgenv().Webhook or getgenv().Webhook == "PASTE_YOUR_WEBHOOK_URL_HERE" then return end
 
     local serverRuntime = getServerRuntime()
     local overallRuntime = getOverallRuntime()
@@ -383,9 +566,7 @@ local function sendCompletionWebhook()
                 {name = "⏱️ Overall Runtime", value = "```" .. formatRuntime(overallRuntime) .. "```", inline = true},
                 {name = "⏱️ Combined Runtime", value = "```" .. formatRuntime(serverRuntime + overallRuntime) .. "```", inline = true},
             },
-            footer = {
-                text = "Stage Farm | COMPLETED"
-            },
+            footer = { text = "Stage Farm | COMPLETED" },
             timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
         }}
     }
@@ -420,28 +601,38 @@ local function startBattle()
     end)
 end
 
-local function spawnCannon()
-    pcall(function()
-        ReplicatedStorage.Events.RemoteFunction.PlayerSpawn:InvokeServer(
-            "Cannon",
-            {CameraPosition = Vector3.new(-20, 5, -14.864141464233)}
-        )
-    end)
+local function spawnUnit(unitName, extraArgs)
+    if extraArgs then
+        pcall(function()
+            ReplicatedStorage.Events.RemoteFunction.PlayerSpawn:InvokeServer(unitName, extraArgs)
+        end)
+    else
+        pcall(function()
+            ReplicatedStorage.Events.RemoteFunction.PlayerSpawn:InvokeServer(unitName)
+        end)
+    end
 end
 
-local function spawnSlot6()
-    pcall(function()
-        ReplicatedStorage.Events.RemoteFunction.PlayerSpawn:InvokeServer("Slot6")
-    end)
-end
-
--- ============ CANNON & SLOT6 SPAM (1.5s INTERVAL) ============
+-- ============ CANNON & SLOTS SPAM (1.5s INTERVAL) ============
 local lastSpamTime = 0
 RunService.Heartbeat:Connect(function()
     if tick() - lastSpamTime >= SPAM_INTERVAL then
         lastSpamTime = tick()
-        spawnCannon()
-        spawnSlot6()
+        
+        local stageConfig = getCurrentStageInfo()
+        if not stageConfig then return end
+
+        if stageConfig.UseCannon then
+            spawnUnit("Cannon", {CameraPosition = Vector3.new(-20, 5, -14.864141464233)})
+        end
+
+        if stageConfig.UseBank then
+            spawnUnit("Bank")
+        end
+
+        for _, slotName in ipairs(stageConfig.SpamSlots) do
+            spawnUnit(slotName)
+        end
     end
 end)
 
@@ -473,13 +664,10 @@ local function advanceToNextStage()
         print("========================================")
         sendCompletionWebhook()
         
-        -- Reset for next run if script is re-executed
         Stats.CurrentStageIndex = 1
         Stats.CurrentStageWins = 0
         Stats.CurrentStageEXP = 0
         saveStats()
-        
-        -- Rejoin after all stages complete
         rejoin()
         return
     end
@@ -489,7 +677,6 @@ local function advanceToNextStage()
         nextStage.Chapter, nextStage.Stage, getStarsDisplay(nextStage.Stars), nextStage.WinsNeeded))
     
     saveStats()
-    -- Continue to next stage without rejoining
     task.wait(0.5)
     startBattle()
 end
@@ -546,11 +733,10 @@ print("========================================")
 print("[INFO] === STAGE QUEUE ===")
 for i, stage in ipairs(StageQueue) do
     local marker = i == currentStageIndex and " ◄ CURRENT" or ""
-    print(string.format("[INFO] %d. %s Stage %d | Normal | %s | %d wins%s", 
+    print(string.format("[INFO] %d. %s Stage %d | %s | %d wins%s", 
         i, stage.Chapter, stage.Stage, getStarsDisplay(stage.Stars), stage.WinsNeeded, marker))
 end
 print("========================================")
-print("[INFO] Spam interval: " .. SPAM_INTERVAL .. "s")
 print("[INFO] Rejoin only after all stages: ON")
 print("[INFO] Webhook: " .. (getgenv().Webhook ~= "PASTE_YOUR_WEBHOOK_URL_HERE" and "SET" or "NOT SET"))
 print("[INFO] Stages Completed: " .. tostring(Stats.CyclesCompleted))

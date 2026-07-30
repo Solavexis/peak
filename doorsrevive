@@ -269,7 +269,7 @@ if IsMainAccount then
         if ReviveObtainedAmount >= threshold then
             if LeaveAfterDupe then
                 task.spawn(function()
-                    task.wait(3) -- Wait 3 seconds to let server finish processing
+                    task.wait(10)
                     UpdateReviveFile(MAINR_FILE, Revives.Value) 
                     LeaveGame()
                 end)

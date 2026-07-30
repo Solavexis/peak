@@ -11,8 +11,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TeleportService = game:GetService("TeleportService")
 
 --// Settings
-local TPToLobby = TPToLobby or false -- Set to true to teleport to lobby instead of closing the game
-local LeaveAfterDupe = LeaveAfterDupe or false -- Set to true to make both accounts leave after the dupe finishes
+local TPToLobby = TPToLobby or false 
+local LeaveAfterDupe = LeaveAfterDupe or false 
 local LOBBY_PLACE_ID = 6516141723
 
 --// Remotes
@@ -255,23 +255,25 @@ if IsGiftingRevive then
 end
 
 --// ========================================================
---// MAIN DUPLICATION PHASE
+--// MAIN DUPLICATION PHASE (100% INSTANT)
 --// ========================================================
 if IsMainAccount then
     local ReviveObtainedAmount = 0
+    
+    -- Changed 0.85 to 0.1 so it doesn't permanently freeze if Roblox drops too many packets
+    local threshold = math.clamp(DuplicationCount * 0.1, 1, DuplicationCount) 
+    
     local function OnObtainRevive(...)
         ReviveObtainedAmount += 1
 
-        if ReviveObtainedAmount > (DuplicationCount * 0.85) then
-            -- If LeaveAfterDupe is true, trigger the leave process
+        if ReviveObtainedAmount >= threshold then
             if LeaveAfterDupe then
                 task.spawn(function()
-                    task.wait(3) -- Wait 3 seconds to ensure all server-side revives settle
-                    UpdateReviveFile(MAINR_FILE, Revives.Value) -- Store final count
+                    task.wait(3) -- Wait 3 seconds to let server finish processing
+                    UpdateReviveFile(MAINR_FILE, Revives.Value) 
                     LeaveGame()
                 end)
             end
-            
             return true
         end
 
@@ -301,7 +303,7 @@ if IsMainAccount then
 
     AttemptToKillLocalPlayer()
 else
-    -- ALT ACCOUNT DUPLICATION PHASE
+    -- ALT ACCOUNT DUPLICATION PHASE (100% INSTANT, ZERO WAITS)
     while not OtherPlayer do task.wait() end
 
     if OtherPlayer:GetAttribute("Alive") then
@@ -322,6 +324,7 @@ else
         task.wait(1)
     end
 
+    -- PURE INSTANT EXECUTION. No task.wait() batching.
     for i = 1, DuplicationCount do
         ReviveFriendEvent:FireServer(OtherPlayer.Name)
     end
@@ -332,7 +335,6 @@ else
         Duration = 5
     })
 
-    -- If LeaveAfterDupe is true, Alt waits for Main to leave, then leaves too
     if LeaveAfterDupe then
         StarterGui:SetCore("SendNotification", {
             Title = Title,
@@ -341,7 +343,6 @@ else
         })
         
         if OtherPlayer then
-            -- Keep checking if the main account is still in the Players service
             while Players:FindFirstChild(OtherPlayer.Name) do
                 task.wait(0.5)
             end

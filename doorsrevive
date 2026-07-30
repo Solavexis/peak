@@ -11,7 +11,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TeleportService = game:GetService("TeleportService")
 
 --// Settings
-local TPToLobby = TPToLobby or false
+local TPToLobby = TPToLobby or false -- Set to true to teleport to lobby instead of closing the game
+local LeaveAfterDupe = LeaveAfterDupe or false -- Set to true to make both accounts leave after the dupe finishes
 local LOBBY_PLACE_ID = 6516141723
 
 --// Remotes
@@ -124,7 +125,7 @@ local function GetOtherPlayer()
     return nil
 end
 
---// Main Account File Listener
+--// Main Account File Listener (Initial 0-revive gifting phase)
 if IsMainAccount then
     task.spawn(function()
         while task.wait(0.5) do
@@ -165,14 +166,11 @@ if IsMainAccount then
                     Duration = 5
                 })
 
-                -- Wait for the Alt player to leave the game
                 if OtherPlayer then
                     OtherPlayer.AncestryChanged:Wait()
                 end
 
                 task.wait(0.5)
-                
-                -- Main account leaves too
                 LeaveGame()
                 break
             end
@@ -229,11 +227,8 @@ if Revives.Value == 0 and not IsMainAccount then
     })
     
     local function OnReceiveRevive(...)
-        -- Store the new value
         UpdateReviveFile(ALTR_FILE, Revives.Value)
         task.wait(0.1)
-        
-        -- Alt leaves using the chosen method
         LeaveGame()
         return true
     end
@@ -259,17 +254,28 @@ if IsGiftingRevive then
     return
 end
 
+--// ========================================================
+--// MAIN DUPLICATION PHASE
+--// ========================================================
 if IsMainAccount then
     local ReviveObtainedAmount = 0
     local function OnObtainRevive(...)
         ReviveObtainedAmount += 1
 
         if ReviveObtainedAmount > (DuplicationCount * 0.85) then
+            -- If LeaveAfterDupe is true, trigger the leave process
+            if LeaveAfterDupe then
+                task.spawn(function()
+                    task.wait(3) -- Wait 3 seconds to ensure all server-side revives settle
+                    UpdateReviveFile(MAINR_FILE, Revives.Value) -- Store final count
+                    LeaveGame()
+                end)
+            end
+            
             return true
         end
 
-        task.wait(9e9)
-
+        task.wait(9e9) -- Hold the remote to allow duping
         return true
     end
 
@@ -295,6 +301,7 @@ if IsMainAccount then
 
     AttemptToKillLocalPlayer()
 else
+    -- ALT ACCOUNT DUPLICATION PHASE
     while not OtherPlayer do task.wait() end
 
     if OtherPlayer:GetAttribute("Alive") then
@@ -324,4 +331,22 @@ else
         Text = "Duping completed!",
         Duration = 5
     })
+
+    -- If LeaveAfterDupe is true, Alt waits for Main to leave, then leaves too
+    if LeaveAfterDupe then
+        StarterGui:SetCore("SendNotification", {
+            Title = Title,
+            Text = "Waiting for Main account to leave...",
+            Duration = 5
+        })
+        
+        if OtherPlayer then
+            -- Keep checking if the main account is still in the Players service
+            while Players:FindFirstChild(OtherPlayer.Name) do
+                task.wait(0.5)
+            end
+        end
+        
+        LeaveGame()
+    end
 end

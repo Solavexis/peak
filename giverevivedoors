@@ -177,7 +177,6 @@ SendBtn.MouseButton1Click:Connect(function()
     end
 
     -- Disable button while waiting/running
-    SendBtn.Enabled = false
     SendBtn.Text = "Checking..."
     SendBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
 

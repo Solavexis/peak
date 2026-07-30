@@ -168,17 +168,50 @@ SendBtn.MouseButton1Click:Connect(function()
         return
     end
 
-    -- Start sending
+    -- Find target player
+    local targetPlayer = Players:FindFirstChild(targetName)
+    if not targetPlayer then
+        StatusLabel.Text = "Error: Player not in server"
+        StatusLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+        return
+    end
+
+    -- Disable button while waiting/running
     SendBtn.Enabled = false
-    SendBtn.Text = "Sending..."
+    SendBtn.Text = "Checking..."
     SendBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+
+    -- Wait for the target's "Alive" attribute to be false
+    local isAlive = targetPlayer:GetAttribute("Alive")
+    
+    while isAlive ~= false do
+        StatusLabel.Text = "Waiting for " .. targetName .. " to die..."
+        StatusLabel.TextColor3 = Color3.fromRGB(255, 165, 0) -- Orange
+        
+        -- Wait half a second before checking again to avoid lagging
+        task.wait(0.5)
+        isAlive = targetPlayer:GetAttribute("Alive")
+
+        -- Safety check in case the player leaves while we are waiting
+        if not Players:FindFirstChild(targetName) then
+            StatusLabel.Text = "Error: Player left the game"
+            StatusLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+            SendBtn.Enabled = true
+            SendBtn.Text = "Send Revives"
+            SendBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+            return
+        end
+    end
+
+    -- Target is now dead (Alive == false), start sending
+    SendBtn.Text = "Sending..."
     StatusLabel.Text = "Sending " .. amount .. " revives to " .. targetName .. "..."
     StatusLabel.TextColor3 = Color3.fromRGB(255, 255, 100)
 
     -- Fire the remote loop
-    -- Added a task.wait() every 50 fires to prevent the client from completely freezing if the number is massive (like 10000)
     for i = 1, amount do
         ReviveFriendEvent:FireServer(targetName)
+        -- Yield every 50 fires to prevent client freeze on massive numbers
         if i % 50 == 0 then
             task.wait()
         end

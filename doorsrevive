@@ -8,7 +8,6 @@
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local VirtualInputManager = Instance.new("VirtualInputManager")
 
 --// Remotes
 local RemotesFolder = ReplicatedStorage.RemotesFolder
@@ -49,6 +48,54 @@ local function ReadReviveFile(fileName)
     return nil
 end
 
+--// ========================================================
+--// EXECUTOR COMPATIBILITY CHECK
+--// ========================================================
+do
+    local missingFunctions = {}
+
+    -- STRICT CHECK: File I/O functions are absolutely required for this version to work
+    if not isfile then table.insert(missingFunctions, "isfile") end
+    if not delfile then table.insert(missingFunctions, "delfile") end
+    if not writefile then table.insert(missingFunctions, "writefile") end
+    if not readfile then table.insert(missingFunctions, "readfile") end
+
+    if #missingFunctions > 0 then
+        local errorMsg = "Script halted! Missing required File I/O: " .. table.concat(missingFunctions, ", ")
+        warn(errorMsg)
+        pcall(function()
+            StarterGui:SetCore("SendNotification", {
+                Title = "Executor Error",
+                Text = errorMsg,
+                Duration = 15
+            })
+        end)
+        return -- Hard stop if file functions are missing
+    end
+
+    -- SOFT CHECK: Warn if optional functions are missing, but allow script to run
+    if not hookmetamethod then
+        pcall(function()
+            StarterGui:SetCore("SendNotification", {
+                Title = "Missing Function",
+                Text = "hookmetamethod missing. Using less stable fallback.",
+                Duration = 10
+            })
+        end)
+    end
+
+    if not replicatesignal then
+        pcall(function()
+            StarterGui:SetCore("SendNotification", {
+                Title = "Missing Function",
+                Text = "replicatesignal missing. You will need to die manually.",
+                Duration = 10
+            })
+        end)
+    end
+end
+--// ========================================================
+
 --// Initialize files with current revive counts
 if IsMainAccount then
     UpdateReviveFile(MAINR_FILE, Revives.Value)
@@ -81,46 +128,33 @@ if IsMainAccount then
                     continue
                 end
 
-                if OtherPlayer:GetAttribute("Alive") == true then
+                -- Wait for Alt to be dead (Alive == false)
+                if OtherPlayer:GetAttribute("Alive") ~= false then
                     StarterGui:SetCore("SendNotification", {
                         Title = Title,
                         Text = "Waiting for the other account to die...",
                         Duration = 5
                     })
-                    OtherPlayer:GetAttributeChangedSignal("Alive"):Wait()
+                    repeat task.wait(0.5) until OtherPlayer:GetAttribute("Alive") == false
                 end
 
-                task.wait(2.5) -- Wait for UI prompt to appear on screen
+                task.wait(1) -- Small delay to ensure server registers the death
                 
                 StarterGui:SetCore("SendNotification", {
                     Title = Title,
-                    Text = "Sending revive via click...",
+                    Text = "Sending revive to alt account...",
                     Duration = 3
                 })
                 
-                -- Use the click/keypress thing instead of FireServer
-                local InitialRevives = Revives.Value
-                local ClickThread = task.spawn(function()
-                    while task.wait() do
-                        VirtualInputManager:SendKeyEvent(
-                            true,
-                            Enum.KeyCode.Return,
-                            false,
-                            game
-                        )
-                    end
-                end)
-
-                -- Wait until the main account's revive count drops by 1 (meaning it was sent)
-                repeat task.wait() until Revives.Value ~= InitialRevives
-                coroutine.close(ClickThread)
+                -- MAIN ACCOUNT USES FIRESERVER TO SEND THE REVIVE
+                ReviveFriendEvent:FireServer(OtherPlayer.Name)
 
                 -- Update main's file after sending
                 UpdateReviveFile(MAINR_FILE, Revives.Value)
                 
                 StarterGui:SetCore("SendNotification", {
                     Title = Title,
-                    Text = "Revive sent to alt account. Now rejoin a new game with your alt account.",
+                    Text = "Revive sent! Alt should accept it and rejoin.",
                     Duration = 5
                 })
                 break
@@ -150,22 +184,19 @@ local function AttemptToKillLocalPlayer()
         LatestRoom:GetPropertyChangedSignal("Value"):Wait()
     end
 
+    -- Fallback logic if replicatesignal is missing
     if replicatesignal then
         replicatesignal(LocalPlayer.Kill)
     else
         StarterGui:SetCore("SendNotification", {
             Title = "Revive Dupe Helper",
-            Text = "Your executor does not support replicatesignal, please die manually",
+            Text = "replicatesignal missing. Please die manually.",
             Duration = 5
         })
-        LocalPlayer.Character.Humanoid.Died:Wait()
+        if LocalPlayer.Character then
+            LocalPlayer.Character:WaitForChild("Humanoid").Died:Wait()
+        end
     end
-
-    StarterGui:SetCore("SendNotification", {
-        Title = "Revive Dupe Helper",
-        Text = "Make your alt account try and revive you. (Click more than once)",
-        Duration = 5
-    })
 end
 
 --// Gifting 1 revive to alt account process (ALT SIDE)
@@ -183,26 +214,32 @@ if Revives.Value == 0 and not IsMainAccount then
         Duration = 5
     })
     
-    local AcceptReviveThread = task.spawn(function()
-        while task.wait() do
-            VirtualInputManager:SendKeyEvent(
-                true,
-                Enum.KeyCode.Return,
-                false,
-                game
-            )
-        end
-    end)
+    -- Function to run the exact moment the server sends the revive event
+    local function OnReceiveRevive(...)
+        -- Update our file with the new revive count before leaving
+        UpdateReviveFile(ALTR_FILE, Revives.Value)
+        task.wait(0.05)
+        game:Shutdown()
+        return true
+    end
 
-    Revives:GetPropertyChangedSignal("Value"):Wait()
-    coroutine.close(AcceptReviveThread)
+    -- Use the exact same hook the main account uses to catch the incoming revive
+    if hookmetamethod then
+        local mtHook; mtHook = hookmetamethod(game, "__newindex", function(...)
+            local self, key = ...
     
-    -- Update our file with the new revive count before leaving
-    UpdateReviveFile(ALTR_FILE, Revives.Value)
+            if rawequal(self, ObtainReviveEvent) and key == "OnClientInvoke" then
+                if not checkcaller() then
+                    return
+                end
+            end
     
-    task.wait(0.05)
-    game:Shutdown()
-    return
+            return mtHook(...)
+        end)
+    end
+
+    -- Set the function so it triggers OnReceiveRevive when the Main gives it
+    ObtainReviveEvent.OnClientInvoke = OnReceiveRevive
 end
 
 task.wait(2)
@@ -220,11 +257,12 @@ if IsMainAccount then
             return true
         end
 
-        task.wait(9e9)
+        task.wait(9e9) -- Main account holds the event to allow duping
 
         return true
     end
 
+    -- Fallback logic if hookmetamethod is missing
     if hookmetamethod then
         local mtHook; mtHook = hookmetamethod(game, "__newindex", function(...)
             local self, key = ...

@@ -1,13 +1,14 @@
 --// 
 --// Original Revive Dupe code by upio
 --// Method found by lolcat
---// Modified to not use chat communication
+--// Modified to use File I/O instead of Chat Communication
 --// 
 
 --// Services
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualInputManager = Instance.new("VirtualInputManager")
 
 --// Remotes
 local RemotesFolder = ReplicatedStorage.RemotesFolder
@@ -25,7 +26,36 @@ local IsMainAccount = LocalPlayer.Name == AccountToDuplicateTo
 local DuplicationCount = DuplicationAmount or 1000
 local Title = IsMainAccount and "Revive Dupe Helper (Main Account)" or "Revive Dupe Helper (Alt Account)"
 
---// Function to get the other player
+--// File Communication Variables
+local ALTR_FILE = "ALTR"
+local MAINR_FILE = "MAINR"
+local IsGiftingRevive = false
+
+--// File Functions
+local function UpdateReviveFile(fileName, value)
+    if isfile(fileName) then
+        delfile(fileName)
+    end
+    writefile(fileName, tostring(value))
+end
+
+local function ReadReviveFile(fileName)
+    if isfile(fileName) then
+        local val = readfile(fileName)
+        if tonumber(val) then
+            return tonumber(val)
+        end
+    end
+    return nil
+end
+
+--// Initialize files with current revive counts
+if IsMainAccount then
+    UpdateReviveFile(MAINR_FILE, Revives.Value)
+else
+    UpdateReviveFile(ALTR_FILE, Revives.Value)
+end
+
 local function GetOtherPlayer()
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer then
@@ -35,21 +65,69 @@ local function GetOtherPlayer()
     return nil
 end
 
---// Wait for game to load
-local function WaitForGameLoad()
+--// Main Account File Listener (Replaces MessageReceived)
+if IsMainAccount then
+    task.spawn(function()
+        while task.wait(0.5) do
+            local altRevives = ReadReviveFile(ALTR_FILE)
+            local mainRevives = Revives.Value
+
+            -- If alt has 0 revives but main has 1 or more, trigger gifting
+            if altRevives ~= nil and altRevives == 0 and mainRevives > 0 then
+                IsGiftingRevive = true
+                OtherPlayer = GetOtherPlayer()
+                
+                if not OtherPlayer then
+                    continue
+                end
+
+                if OtherPlayer:GetAttribute("Alive") == true then
+                    StarterGui:SetCore("SendNotification", {
+                        Title = Title,
+                        Text = "Waiting for the other account to die...",
+                        Duration = 5
+                    })
+                    OtherPlayer:GetAttributeChangedSignal("Alive"):Wait()
+                end
+
+                task.wait(2.5)
+                ReviveFriendEvent:FireServer(OtherPlayer.Name)
+
+                -- Update main's file after sending
+                UpdateReviveFile(MAINR_FILE, Revives.Value)
+                
+                StarterGui:SetCore("SendNotification", {
+                    Title = Title,
+                    Text = "Revive sent to alt account. Now rejoin a new game with your alt account.",
+                    Duration = 5
+                })
+                break
+            end
+        end
+    end)
+end
+
+task.spawn(function()
+    while not OtherPlayer do
+        OtherPlayer = GetOtherPlayer()
+        if not OtherPlayer then
+            task.wait(1)
+        end
+    end
+end)
+
+--// Functions
+local function AttemptToKillLocalPlayer()
     if LatestRoom.Value == 0 then
         StarterGui:SetCore("SendNotification", {
             Title = "Revive Dupe Helper",
-            Text = "Waiting for game to load (open a door)...",
+            Text = "Please open a door",
             Duration = 5
         })
-        LatestRoom:GetPropertyChangedSignal("Value"):Wait()
-        task.wait(1)
-    end
-end
 
---// Function to kill local player
-local function AttemptToKillLocalPlayer()
+        LatestRoom:GetPropertyChangedSignal("Value"):Wait()
+    end
+
     if replicatesignal then
         replicatesignal(LocalPlayer.Kill)
     else
@@ -60,115 +138,123 @@ local function AttemptToKillLocalPlayer()
         })
         LocalPlayer.Character.Humanoid.Died:Wait()
     end
+
+    StarterGui:SetCore("SendNotification", {
+        Title = "Revive Dupe Helper",
+        Text = "Make your alt account try and revive you. (Click more than once)",
+        Duration = 5
+    })
 end
 
---// Wait for other player to join and have Alive attribute
-local function WaitForOtherPlayer()
-    while not OtherPlayer do
-        OtherPlayer = GetOtherPlayer()
-        if not OtherPlayer then
-            task.wait(1)
-        end
-    end
-    
-    -- Wait for other player's Alive attribute to be set
-    while OtherPlayer:GetAttribute("Alive") == nil do
-        task.wait(0.5)
-    end
-    
-    return OtherPlayer
-end
+--// Gifting 1 revive to alt account process
+if Revives.Value == 0 and not IsMainAccount then
+    IsGiftingRevive = true
 
---// Wait for other player to die (Alive = false)
-local function WaitForOtherPlayerDeath()
-    if OtherPlayer:GetAttribute("Alive") == false then
-        return
-    end
+    -- Tell the main account we need a revive by writing 0 to ALTR
+    UpdateReviveFile(ALTR_FILE, 0)
+
+    AttemptToKillLocalPlayer()
     
     StarterGui:SetCore("SendNotification", {
         Title = Title,
-        Text = "Waiting for the other account to die...",
+        Text = "Waiting for the other account to gift you a revive...",
         Duration = 5
     })
     
-    -- Keep waiting until Alive is actually false
-    repeat
-        OtherPlayer:GetAttributeChangedSignal("Alive"):Wait()
-    until OtherPlayer:GetAttribute("Alive") == false
+    local AcceptReviveThread = task.spawn(function()
+        while task.wait() do
+            VirtualInputManager:SendKeyEvent(
+                true,
+                Enum.KeyCode.Return,
+                false,
+                game
+            )
+        end
+    end)
+
+    Revives:GetPropertyChangedSignal("Value"):Wait()
+    coroutine.close(AcceptReviveThread)
+    
+    -- Update our file with the new revive count before leaving
+    UpdateReviveFile(ALTR_FILE, Revives.Value)
+    
+    task.wait(0.05)
+    game:Shutdown()
+    return
 end
 
---// Main logic
-task.spawn(function()
-    -- Wait for game to load
-    WaitForGameLoad()
-    
-    -- Get the other player
-    WaitForOtherPlayer()
+task.wait(2)
 
-    if IsMainAccount then
-        -- Main account logic: Hook ObtainReviveEvent and die
-        local ReviveObtainedAmount = 0
-        local function OnObtainRevive(...)
-            ReviveObtainedAmount += 1
+if IsGiftingRevive then
+    return
+end
 
-            if ReviveObtainedAmount > (DuplicationCount * 0.85) then
-                return true
-            end
+if IsMainAccount then
+    local ReviveObtainedAmount = 0
+    local function OnObtainRevive(...)
+        ReviveObtainedAmount += 1
 
-            task.wait(9e9)
+        if ReviveObtainedAmount > (DuplicationCount * 0.85) then
             return true
         end
 
-        if hookmetamethod then
-            local mtHook; mtHook = hookmetamethod(game, "__newindex", function(...)
-                local self, key = ...
-    
-                if rawequal(self, ObtainReviveEvent) and key == "OnClientInvoke" then
-                    if not checkcaller() then
-                        return
-                    end
-                end
-    
-                return mtHook(...)
-            end)
-        else
-            task.defer(function()
-                while task.wait() do
-                    ObtainReviveEvent.OnClientInvoke = OnObtainRevive
-                end
-            end)
-        end
+        task.wait(9e9)
 
-        ObtainReviveEvent.OnClientInvoke = OnObtainRevive
-
-        StarterGui:SetCore("SendNotification", {
-            Title = Title,
-            Text = "Dying now... Alt will detect and start duping.",
-            Duration = 5
-        })
-
-        AttemptToKillLocalPlayer()
-    else
-        -- Alt account logic: Wait for main to die (Alive = false), then spam revives
-        WaitForOtherPlayerDeath()
-
-        for i = 1, 5 do
-            StarterGui:SetCore("SendNotification", {
-                Title = Title,
-                Text = `Duping in {6 - i} seconds...`,
-                Duration = 1
-            })
-            task.wait(1)
-        end
-
-        for i = 1, DuplicationCount do
-            ReviveFriendEvent:FireServer(OtherPlayer.Name)
-        end
-
-        StarterGui:SetCore("SendNotification", {
-            Title = Title,
-            Text = "Duping completed!",
-            Duration = 5
-        })
+        return true
     end
-end)
+
+    if hookmetamethod then
+        local mtHook; mtHook = hookmetamethod(game, "__newindex", function(...)
+            local self, key = ...
+    
+            if rawequal(self, ObtainReviveEvent) and key == "OnClientInvoke" then
+                if not checkcaller() then
+                    return
+                end
+            end
+    
+            return mtHook(...)
+        end)
+    else
+        task.defer(function()
+            while task.wait() do
+                ObtainReviveEvent.OnClientInvoke = OnObtainRevive
+            end
+        end)
+    end
+
+    ObtainReviveEvent.OnClientInvoke = OnObtainRevive
+
+    AttemptToKillLocalPlayer()
+else
+    while not OtherPlayer do task.wait() end
+
+    if OtherPlayer:GetAttribute("Alive") then
+        StarterGui:SetCore("SendNotification", {
+            Title = Title,
+            Text = "Waiting for the other account to die...",
+            Duration = 5
+        })
+
+        OtherPlayer:GetAttributeChangedSignal("Alive"):Wait()
+    end
+
+    for i = 1, 5 do
+        StarterGui:SetCore("SendNotification", {
+            Title = Title,
+            Text = `Duping in {6 - i} seconds...`,
+            Duration = 1
+        })
+        task.wait(1)
+    end
+
+    for i = 1, DuplicationCount do
+        ReviveFriendEvent:FireServer(OtherPlayer.Name)
+    end
+
+    StarterGui:SetCore("SendNotification", {
+        Title = Title,
+        Text = "Duping completed!",
+        Duration = 5
+    })
+end

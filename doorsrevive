@@ -8,6 +8,11 @@
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TeleportService = game:GetService("TeleportService")
+
+--// Settings
+local TPToLobby = TPToLobby or false
+local LOBBY_PLACE_ID = 6516141723
 
 --// Remotes
 local RemotesFolder = ReplicatedStorage.RemotesFolder
@@ -29,6 +34,15 @@ local Title = IsMainAccount and "Revive Dupe Helper (Main Account)" or "Revive D
 local ALTR_FILE = "ALTR"
 local MAINR_FILE = "MAINR"
 local IsGiftingRevive = false
+
+--// Universal Leave Game Function
+local function LeaveGame()
+    if TPToLobby then
+        TeleportService:Teleport(LOBBY_PLACE_ID, LocalPlayer)
+    else
+        game:Shutdown()
+    end
+end
 
 --// File Functions
 local function UpdateReviveFile(fileName, value)
@@ -54,7 +68,6 @@ end
 do
     local missingFunctions = {}
 
-    -- STRICT CHECK: File I/O functions are absolutely required for this version to work
     if not isfile then table.insert(missingFunctions, "isfile") end
     if not delfile then table.insert(missingFunctions, "delfile") end
     if not writefile then table.insert(missingFunctions, "writefile") end
@@ -70,10 +83,9 @@ do
                 Duration = 15
             })
         end)
-        return -- Hard stop if file functions are missing
+        return 
     end
 
-    -- SOFT CHECK: Warn if optional functions are missing, but allow script to run
     if not hookmetamethod then
         pcall(function()
             StarterGui:SetCore("SendNotification", {
@@ -112,14 +124,13 @@ local function GetOtherPlayer()
     return nil
 end
 
---// Main Account File Listener (Replaces MessageReceived)
+--// Main Account File Listener
 if IsMainAccount then
     task.spawn(function()
         while task.wait(0.5) do
             local altRevives = ReadReviveFile(ALTR_FILE)
             local mainRevives = Revives.Value
 
-            -- If alt has 0 revives but main has 1 or more, trigger gifting
             if altRevives ~= nil and altRevives == 0 and mainRevives > 0 then
                 IsGiftingRevive = true
                 OtherPlayer = GetOtherPlayer()
@@ -128,7 +139,6 @@ if IsMainAccount then
                     continue
                 end
 
-                -- Wait for Alt to be dead (Alive == false)
                 if OtherPlayer:GetAttribute("Alive") ~= false then
                     StarterGui:SetCore("SendNotification", {
                         Title = Title,
@@ -138,7 +148,7 @@ if IsMainAccount then
                     repeat task.wait(0.5) until OtherPlayer:GetAttribute("Alive") == false
                 end
 
-                task.wait(1) -- Small delay to ensure server registers the death
+                task.wait(1)
                 
                 StarterGui:SetCore("SendNotification", {
                     Title = Title,
@@ -146,17 +156,24 @@ if IsMainAccount then
                     Duration = 3
                 })
                 
-                -- MAIN ACCOUNT USES FIRESERVER TO SEND THE REVIVE
                 ReviveFriendEvent:FireServer(OtherPlayer.Name)
-
-                -- Update main's file after sending
                 UpdateReviveFile(MAINR_FILE, Revives.Value)
                 
                 StarterGui:SetCore("SendNotification", {
                     Title = Title,
-                    Text = "Revive sent! Alt should accept it and rejoin.",
+                    Text = "Revive sent! Waiting for Alt to leave...",
                     Duration = 5
                 })
+
+                -- Wait for the Alt player to leave the game
+                if OtherPlayer then
+                    OtherPlayer.AncestryChanged:Wait()
+                end
+
+                task.wait(0.5)
+                
+                -- Main account leaves too
+                LeaveGame()
                 break
             end
         end
@@ -180,11 +197,9 @@ local function AttemptToKillLocalPlayer()
             Text = "Please open a door",
             Duration = 5
         })
-
         LatestRoom:GetPropertyChangedSignal("Value"):Wait()
     end
 
-    -- Fallback logic if replicatesignal is missing
     if replicatesignal then
         replicatesignal(LocalPlayer.Kill)
     else
@@ -203,7 +218,6 @@ end
 if Revives.Value == 0 and not IsMainAccount then
     IsGiftingRevive = true
 
-    -- Tell the main account we need a revive by writing 0 to ALTR
     UpdateReviveFile(ALTR_FILE, 0)
 
     AttemptToKillLocalPlayer()
@@ -214,31 +228,28 @@ if Revives.Value == 0 and not IsMainAccount then
         Duration = 5
     })
     
-    -- Function to run the exact moment the server sends the revive event
     local function OnReceiveRevive(...)
-        -- Update our file with the new revive count before leaving
+        -- Store the new value
         UpdateReviveFile(ALTR_FILE, Revives.Value)
-        task.wait(0.05)
-        game:Shutdown()
+        task.wait(0.1)
+        
+        -- Alt leaves using the chosen method
+        LeaveGame()
         return true
     end
 
-    -- Use the exact same hook the main account uses to catch the incoming revive
     if hookmetamethod then
         local mtHook; mtHook = hookmetamethod(game, "__newindex", function(...)
             local self, key = ...
-    
             if rawequal(self, ObtainReviveEvent) and key == "OnClientInvoke" then
                 if not checkcaller() then
                     return
                 end
             end
-    
             return mtHook(...)
         end)
     end
 
-    -- Set the function so it triggers OnReceiveRevive when the Main gives it
     ObtainReviveEvent.OnClientInvoke = OnReceiveRevive
 end
 
@@ -257,22 +268,19 @@ if IsMainAccount then
             return true
         end
 
-        task.wait(9e9) -- Main account holds the event to allow duping
+        task.wait(9e9)
 
         return true
     end
 
-    -- Fallback logic if hookmetamethod is missing
     if hookmetamethod then
         local mtHook; mtHook = hookmetamethod(game, "__newindex", function(...)
             local self, key = ...
-    
             if rawequal(self, ObtainReviveEvent) and key == "OnClientInvoke" then
                 if not checkcaller() then
                     return
                 end
             end
-    
             return mtHook(...)
         end)
     else
@@ -295,7 +303,6 @@ else
             Text = "Waiting for the other account to die...",
             Duration = 5
         })
-
         OtherPlayer:GetAttributeChangedSignal("Alive"):Wait()
     end
 

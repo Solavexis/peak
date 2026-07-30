@@ -1,0 +1,174 @@
+--// 
+--// Original Revive Dupe code by upio
+--// Method found by lolcat
+--// Modified to not use chat communication
+--// 
+
+--// Services
+local Players = game:GetService("Players")
+local StarterGui = game:GetService("StarterGui")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+--// Remotes
+local RemotesFolder = ReplicatedStorage.RemotesFolder
+local ReviveFriendEvent = RemotesFolder.ReviveFriend
+local ObtainReviveEvent = RemotesFolder.ObtainGiftedRevive
+
+--// Player Variables
+local LocalPlayer = Players.LocalPlayer
+local OtherPlayer
+
+local LatestRoom = ReplicatedStorage.GameData.LatestRoom
+local Revives = LocalPlayer.PlayerGui.TopbarUI.Topbar.StatsTopbarHandler.StatModules.Revives.RevivesVal
+
+local IsMainAccount = LocalPlayer.Name == AccountToDuplicateTo
+local DuplicationCount = DuplicationAmount or 1000
+local Title = IsMainAccount and "Revive Dupe Helper (Main Account)" or "Revive Dupe Helper (Alt Account)"
+
+--// Function to get the other player
+local function GetOtherPlayer()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            return player
+        end
+    end
+    return nil
+end
+
+--// Wait for game to load
+local function WaitForGameLoad()
+    if LatestRoom.Value == 0 then
+        StarterGui:SetCore("SendNotification", {
+            Title = "Revive Dupe Helper",
+            Text = "Waiting for game to load (open a door)...",
+            Duration = 5
+        })
+        LatestRoom:GetPropertyChangedSignal("Value"):Wait()
+        task.wait(1)
+    end
+end
+
+--// Function to kill local player
+local function AttemptToKillLocalPlayer()
+    if replicatesignal then
+        replicatesignal(LocalPlayer.Kill)
+    else
+        StarterGui:SetCore("SendNotification", {
+            Title = "Revive Dupe Helper",
+            Text = "Your executor does not support replicatesignal, please die manually",
+            Duration = 5
+        })
+        LocalPlayer.Character.Humanoid.Died:Wait()
+    end
+end
+
+--// Wait for other player to join and have Alive attribute
+local function WaitForOtherPlayer()
+    while not OtherPlayer do
+        OtherPlayer = GetOtherPlayer()
+        if not OtherPlayer then
+            task.wait(1)
+        end
+    end
+    
+    -- Wait for other player's Alive attribute to be set
+    while OtherPlayer:GetAttribute("Alive") == nil do
+        task.wait(0.5)
+    end
+    
+    return OtherPlayer
+end
+
+--// Wait for other player to die (Alive = false)
+local function WaitForOtherPlayerDeath()
+    if OtherPlayer:GetAttribute("Alive") == false then
+        return
+    end
+    
+    StarterGui:SetCore("SendNotification", {
+        Title = Title,
+        Text = "Waiting for the other account to die...",
+        Duration = 5
+    })
+    
+    -- Keep waiting until Alive is actually false
+    repeat
+        OtherPlayer:GetAttributeChangedSignal("Alive"):Wait()
+    until OtherPlayer:GetAttribute("Alive") == false
+end
+
+--// Main logic
+task.spawn(function()
+    -- Wait for game to load
+    WaitForGameLoad()
+    
+    -- Get the other player
+    WaitForOtherPlayer()
+
+    if IsMainAccount then
+        -- Main account logic: Hook ObtainReviveEvent and die
+        local ReviveObtainedAmount = 0
+        local function OnObtainRevive(...)
+            ReviveObtainedAmount += 1
+
+            if ReviveObtainedAmount > (DuplicationCount * 0.85) then
+                return true
+            end
+
+            task.wait(9e9)
+            return true
+        end
+
+        if hookmetamethod then
+            local mtHook; mtHook = hookmetamethod(game, "__newindex", function(...)
+                local self, key = ...
+    
+                if rawequal(self, ObtainReviveEvent) and key == "OnClientInvoke" then
+                    if not checkcaller() then
+                        return
+                    end
+                end
+    
+                return mtHook(...)
+            end)
+        else
+            task.defer(function()
+                while task.wait() do
+                    ObtainReviveEvent.OnClientInvoke = OnObtainRevive
+                end
+            end)
+        end
+
+        ObtainReviveEvent.OnClientInvoke = OnObtainRevive
+
+        StarterGui:SetCore("SendNotification", {
+            Title = Title,
+            Text = "Dying now... Alt will detect and start duping.",
+            Duration = 5
+        })
+
+        AttemptToKillLocalPlayer()
+    else
+        -- Alt account logic: Wait for main to die (Alive = false), then spam revives
+        WaitForOtherPlayerDeath()
+
+        for i = 1, 5 do
+            StarterGui:SetCore("SendNotification", {
+                Title = Title,
+                Text = `Duping in {6 - i} seconds...`,
+                Duration = 1
+            })
+            task.wait(1)
+        end
+
+        for i = 1, DuplicationCount do
+            ReviveFriendEvent:FireServer(OtherPlayer.Name)
+        end
+
+        StarterGui:SetCore("SendNotification", {
+            Title = Title,
+            Text = "Duping completed!",
+            Duration = 5
+        })
+    end
+end)

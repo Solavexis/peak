@@ -90,8 +90,30 @@ if IsMainAccount then
                     OtherPlayer:GetAttributeChangedSignal("Alive"):Wait()
                 end
 
-                task.wait(2.5)
-                ReviveFriendEvent:FireServer(OtherPlayer.Name)
+                task.wait(2.5) -- Wait for UI prompt to appear on screen
+                
+                StarterGui:SetCore("SendNotification", {
+                    Title = Title,
+                    Text = "Sending revive via click...",
+                    Duration = 3
+                })
+                
+                -- Use the click/keypress thing instead of FireServer
+                local InitialRevives = Revives.Value
+                local ClickThread = task.spawn(function()
+                    while task.wait() do
+                        VirtualInputManager:SendKeyEvent(
+                            true,
+                            Enum.KeyCode.Return,
+                            false,
+                            game
+                        )
+                    end
+                end)
+
+                -- Wait until the main account's revive count drops by 1 (meaning it was sent)
+                repeat task.wait() until Revives.Value ~= InitialRevives
+                coroutine.close(ClickThread)
 
                 -- Update main's file after sending
                 UpdateReviveFile(MAINR_FILE, Revives.Value)
@@ -146,7 +168,7 @@ local function AttemptToKillLocalPlayer()
     })
 end
 
---// Gifting 1 revive to alt account process
+--// Gifting 1 revive to alt account process (ALT SIDE)
 if Revives.Value == 0 and not IsMainAccount then
     IsGiftingRevive = true
 

@@ -24,6 +24,24 @@ end
 
 getgenv().PawnShopFarmRunning = true
 
+local SCRIPT_URL = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/runawaysfarm"
+
+if type(queue_on_teleport) == "function" then
+	queue_on_teleport(string.format([[
+		task.wait(2)
+
+		if not game:IsLoaded() then
+			game.Loaded:Wait()
+		end
+
+		loadstring(game:HttpGet(%q, true))()
+	]], SCRIPT_URL))
+
+	print("PawnShop farm queued for teleport.")
+else
+	warn("queue_on_teleport is not available in this executor.")
+end
+
 local flowClient = ReplicatedStorage:WaitForChild("FlowClient")
 local clientRunner = flowClient:WaitForChild("ClientRunner")
 local remote = clientRunner:WaitForChild("Event")

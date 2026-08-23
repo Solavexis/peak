@@ -1,0 +1,211 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+if game.PlaceId == 118418618261207 then
+	print("Please go in-game to run the auto farm")
+	return
+elseif game.PlaceId ~= 117311404196294 then
+	return
+end
+
+if not game:IsLoaded() then
+	game.Loaded:Wait()
+end
+
+local player = Players.LocalPlayer
+local WAIT_TIME_PER_SHOP = 1.8
+local STABLE_TIME_REQUIRED = 3
+local CHECK_INTERVAL = 0.5
+
+if getgenv().PawnShopFarmRunning then
+	getgenv().PawnShopFarmRunning = false
+	task.wait(0.1)
+end
+
+getgenv().PawnShopFarmRunning = true
+
+local flowClient = ReplicatedStorage:WaitForChild("FlowClient")
+local clientRunner = flowClient:WaitForChild("ClientRunner")
+local remote = clientRunner:WaitForChild("Event")
+
+local function getCharacter()
+	local character = player.Character
+
+	if not character or not character.Parent then
+		character = player.CharacterAdded:Wait()
+	end
+
+	local hrp = character:WaitForChild("HumanoidRootPart", 10)
+
+	return character, hrp
+end
+
+local function getPawnShops()
+	local map = workspace:FindFirstChild("Map")
+
+	if not map then
+		return {}
+	end
+
+	local buildings = map:FindFirstChild("Buildings")
+
+	if not buildings then
+		return {}
+	end
+
+	local pawnShops = {}
+
+	for _, object in ipairs(buildings:GetChildren()) do
+		if object.Name == "PawnShop" then
+			table.insert(pawnShops, object)
+		end
+	end
+
+	return pawnShops
+end
+
+local function waitForPawnShops()
+	local lastCount = 0
+	local stableTime = 0
+
+	while getgenv().PawnShopFarmRunning do
+		local pawnShops = getPawnShops()
+		local count = #pawnShops
+
+		if count > 0 then
+			if count == lastCount then
+				stableTime += CHECK_INTERVAL
+			else
+				lastCount = count
+				stableTime = 0
+				print("PawnShops found: " .. count)
+			end
+
+			if stableTime >= STABLE_TIME_REQUIRED then
+				print("PawnShop count stable at " .. count)
+				return pawnShops
+			end
+		else
+			lastCount = 0
+			stableTime = 0
+		end
+
+		task.wait(CHECK_INTERVAL)
+	end
+
+	return {}
+end
+
+local function killAllNPCs()
+	local npcsFolder = workspace:FindFirstChild("NPCs")
+
+	if not npcsFolder then
+		return
+	end
+
+	for _, npc in ipairs(npcsFolder:GetChildren()) do
+		if not getgenv().PawnShopFarmRunning then
+			return
+		end
+
+		local humanoid = npc:FindFirstChildOfClass("Humanoid")
+
+		if humanoid and humanoid.Parent then
+			pcall(function()
+				remote:FireServer(
+					"NPCs",
+					"Damage",
+					humanoid,
+					math.huge
+				)
+			end)
+		end
+	end
+end
+
+local function farmPawnShops(pawnShops)
+	local _, hrp = getCharacter()
+
+	if not hrp then
+		return false
+	end
+
+	print("Starting with " .. #pawnShops .. " PawnShop(s)")
+
+	for index, shop in ipairs(pawnShops) do
+		if not getgenv().PawnShopFarmRunning then
+			return false
+		end
+
+		if not shop or not shop.Parent then
+			continue
+		end
+
+		local targetCFrame
+
+		if shop:IsA("Model") then
+			targetCFrame = shop:GetPivot()
+		elseif shop:IsA("BasePart") then
+			targetCFrame = shop.CFrame
+		end
+
+		if targetCFrame then
+			hrp.CFrame = targetCFrame + Vector3.new(0, 2, 0)
+
+			print("[" .. index .. "/" .. #pawnShops .. "] Arrived: " .. shop.Name)
+
+			task.wait(0.2)
+
+			killAllNPCs()
+
+			task.wait(WAIT_TIME_PER_SHOP)
+		end
+	end
+
+	print("PawnShop run finished")
+
+	return true
+end
+
+local pawnShops = waitForPawnShops()
+
+if not getgenv().PawnShopFarmRunning then
+	return
+end
+
+if #pawnShops == 0 then
+	return
+end
+
+farmPawnShops(pawnShops)
+
+if not getgenv().PawnShopFarmRunning then
+	return
+end
+
+local character, hrp = getCharacter()
+
+if character and hrp then
+	character:PivotTo(CFrame.new(1780, 1940, 83615))
+end
+
+task.wait(2)
+
+if not getgenv().PawnShopFarmRunning then
+	return
+end
+
+pcall(function()
+	remote:FireServer("PlayerDamage", "TakeDamage", 1000)
+	remote:FireServer("Passout", "Abandon")
+end)
+
+task.spawn(function()
+	while getgenv().PawnShopFarmRunning do
+		pcall(function()
+			remote:FireServer("GameManager", "Replay")
+		end)
+
+		task.wait()
+	end
+end)

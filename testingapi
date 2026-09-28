@@ -1,1965 +1,920 @@
---!strict
+--[[
+    Tower Defense API — Client-Side
+    Usage:
+        local API = loadstring(game:HttpGet("YOUR_RAW_URL"))()
+        -- or
+        local API = loadstring(yourSource)()
 
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local HttpService = game:GetService("HttpService")
-local TeleportService = game:GetService("TeleportService")
+    Features:
+        • Game detection by PlaceId
+        • Lobby & In-Game wrappers
+        • Macro recorder / replayer with hooks
+        • queue_on_teleport persistence
+        • Uses exploit env: firesignal, firetouchinterest,
+          hookmetamethod, getnamecallmethod, newcclosure
+]]
 
-local LocalPlayer = Players.LocalPlayer
+return (function()
+    local API = {}
 
-local TowerAPI = {}
+    -- ═══════════════════════════════════════════════════════════
+    --  CONSTANTS
+    -- ═══════════════════════════════════════════════════════════
+    local PLACE_LOBBY  = 15549445942
+    local PLACE_INGAME = 15549929783
 
---==================================================
--- CONFIG
---==================================================
-
-local Config = {
-    Debug = true,
-    DryRun = false,
-
-    DefaultTimeout = 15,
-    ConditionInterval = 0.05,
-    TowerDetectionTimeout = 5,
-
-    AutoRecord = true,
-
-    -- The game cycles targets in this order.
-    TargetOrder = {
-        "First",
-        "Last",
-        "Strongest",
-        "Weakest",
-        "Random",
-    },
-}
-
---==================================================
--- STATE
---==================================================
-
-local State = {
-    Recording = false,
-    Replaying = false,
-    Paused = false,
-
-    CurrentAction = 0,
-    CurrentReplay = nil,
-
-    RecordingStarted = nil,
-
-    -- IMPORTANT:
-    -- This never goes backwards.
-    --
-    -- If towers 1, 2, 3 exist and tower 3 is sold,
-    -- the next tower becomes 4.
-    NextTowerID = 1,
-
-    Towers = {},
-    TowerInstances = {},
-
-    -- Current locally-known target state.
-    --
-    -- New towers are assumed to start at "First".
-    TowerTargets = {},
-
-    ReplayToken = 0,
-
-    TeleportQueue = nil,
-
-    LastError = nil,
-
-    DialogueHistory = {},
-    MessageHistory = {},
-}
-
---==================================================
--- EVENTS
---==================================================
-
-local Events = {
-    OnError = Instance.new("BindableEvent"),
-    OnAction = Instance.new("BindableEvent"),
-
-    OnReplayStart = Instance.new("BindableEvent"),
-    OnReplayFinished = Instance.new("BindableEvent"),
-    OnReplayStopped = Instance.new("BindableEvent"),
-
-    -- OnTeleport removed: replaced by queue_on_teleport()
-    -- which fires the MessageRemote via firesignal.
-
-    OnDialogue = Instance.new("BindableEvent"),
-    OnMessage = Instance.new("BindableEvent"),
-
-    OnTowerAdded = Instance.new("BindableEvent"),
-    OnTowerRemoved = Instance.new("BindableEvent"),
-}
-
-TowerAPI.Events = Events
-
---==================================================
--- QUEUE ON TELEPORT (firesignal)
---==================================================
-
--- Forward-declared; MessageRemote is resolved later
--- in the REMOTES section. We set the function body
--- after MessageRemote is available.
-local MessageRemote -- resolved in REMOTES section
-
-local function queue_on_teleport(placeId, teleportData)
-    if MessageRemote and MessageRemote:IsA("RemoteEvent") then
-        firesignal(MessageRemote.OnClientEvent, {
-            Type = "Teleport",
-            PlaceId = placeId,
-            TeleportData = teleportData,
-        })
-    end
-end
-
---==================================================
--- DEBUG
---==================================================
-
-local function debugPrint(...)
-    if Config.Debug then
-        print("[TowerAPI]", ...)
-    end
-end
-
-local function makeError(message, code, extra)
-    local errorData = {
-        Success = false,
-        Message = tostring(message),
-        Code = code or "UNKNOWN",
+    local ELEVATOR_MAP = {
+        Normal   = "ElevatorMain",
+        Dream    = "ElevatorDream",
+        Hard     = "ElevatorHard",
+        Incident = "ElevatorIncident",
+        Korblox  = "ElevatorKorblox",
+        Undead   = "ElevatorUndead",
+        Winter   = "ElevatorWinter",
     }
 
-    if extra then
-        for key, value in pairs(extra) do
-            errorData[key] = value
+    API.Version    = "1.0.0"
+    API.PlaceIds   = { Lobby = PLACE_LOBBY, InGame = PLACE_INGAME }
+    API.ElevatorTypes = ELEVATOR_MAP
+
+    -- ═══════════════════════════════════════════════════════════
+    --  SERVICES
+    -- ═══════════════════════════════════════════════════════════
+    local RS          = game:GetService("ReplicatedStorage")
+    local WS          = game:GetService("Workspace")
+    local Players     = game:GetService("Players")
+    local HttpService = game:GetService("HttpService")
+    local LocalPlayer = Players.LocalPlayer
+
+    -- ═══════════════════════════════════════════════════════════
+    --  EXPLOIT ENVIRONMENT (graceful fallbacks)
+    -- ═══════════════════════════════════════════════════════════
+    local _queue_on_teleport = queue_on_teleport or function() warn("[TD-API] queue_on_teleport not available") end
+    local _firesignal        = firesignal        or function() warn("[TD-API] firesignal not available") end
+    local _firetouchinterest = firetouchinterest  or function() warn("[TD-API] firetouchinterest not available") end
+    local _hookmetamethod    = hookmetamethod     or nil
+    local _getnamecallmethod = getnamecallmethod  or nil
+    local _newcclosure       = newcclosure        or function(f) return f end
+
+    -- ═══════════════════════════════════════════════════════════
+    --  GAME STATE
+    -- ═══════════════════════════════════════════════════════════
+    API.PlaceId     = game.PlaceId
+    API.IsLobby     = game.PlaceId == PLACE_LOBBY
+    API.IsInGame    = game.PlaceId == PLACE_INGAME
+    API.IsSupported = API.IsLobby or API.IsInGame
+
+    -- ═══════════════════════════════════════════════════════════
+    --  INTERNAL HELPERS
+    -- ═══════════════════════════════════════════════════════════
+    local function getRemote(path)
+        local obj = RS
+        for _, name in ipairs(path) do
+            obj = obj:FindFirstChild(name)
+            if not obj then return nil end
+        end
+        return obj
+    end
+
+    local function cframeToTable(cf)
+        if typeof(cf) ~= "CFrame" then return {} end
+        return { cf:GetComponents() }
+    end
+
+    local function tableToCFrame(t)
+        if type(t) ~= "table" or #t == 0 then return CFrame.new() end
+        return CFrame.new(unpack(t))
+    end
+
+    local function getHRP()
+        local char = LocalPlayer.Character
+        return char and char:FindFirstChild("HumanoidRootPart")
+    end
+
+    -- ═══════════════════════════════════════════════════════════
+    --  PRINT INFO
+    -- ═══════════════════════════════════════════════════════════
+    function API.PrintInfo()
+        print("─────────────────────────────────────")
+        print("  Tower Defense API v" .. API.Version)
+        print("  PlaceId:    " .. API.PlaceId)
+        print("  IsLobby:    " .. tostring(API.IsLobby))
+        print("  IsInGame:   " .. tostring(API.IsInGame))
+        print("  Supported:  " .. tostring(API.IsSupported))
+        print("─────────────────────────────────────")
+    end
+
+    -- ═══════════════════════════════════════════════════════════
+B════════════════════════════════════════════════════════0═
+   D═════════════════════════════════════════════════════════
+    API.Utils = {}
+
+    function API.Utils.FireSignalDignal, ...)
+        _firesignal(signal, ...)
+    end
+
+    function API.Utils.FireTouchInterest(part, touchPartB flag)
+        _firetouchinterest(part, touchPartB flag or 0)
+    end
+
+    function API.Utils.GetMaps()
+        local folder = RS:FindFirstChild("Maps")
+        if not folder then return {} end
+        local out = {}
+        for _, v in ipairs(folder:GetChildren()) do
+            out[#out + 1] = v.Name
+        end
+        return out
+    end
+
+    function API.Utils.GetModifiers()
+        local folder = RS:FindFirstChild("Mods")
+        if not folder then return {} end
+        local out = {}
+        for _, v in ipairs(folder:GetChildren()) do
+            out[#out + 1] = v.Name
+        end
+        return out
+    end
+
+    function API.Utils.GetTowerList()
+        local folder = WS:FindFirstChild("Towers")
+        if not folder then return {} end
+        local out = {}
+        for _, v in ipairs(folder:GetChildren()) do
+            out[v.Name] = v
+        end
+        return out
+    end
+
+    function API.Utils.CFrameToTable(cf)
+        return cframeToTable(cf)
+    end
+
+    function API.Utils.TableToCFrame(t)
+        return tableToCFrame(t)
+    end
+
+    -- ═══════════════════════════════════════════════════════════
+    --  LOBBY MODULE
+    -- ═══════════════════════════════════════════════════════════
+    API.Lobby = {}
+
+    --- Fetch raw player data from the server
+    function API.Lobby.GetData()
+        local remote = getRemote({"Remotes", "GetData"})
+        if remote then
+            return remote:InvokeServer()
+        end
+        return nil
+    end
+
+    --- Get owned towers list
+    function API.Lobby.GetOwnedTowers()
+        local raw = API.Lobby.GetData()
+        if type(raw) ~= "table" then return {} end
+        local data = raw.OwnedTowers and raw or (raw[1] and raw[1].OwnedTowers and raw[1])
+        return data and data.OwnedTowers or {}
+    end
+
+    --- Interact with an item (equip/unequip towers)
+    function API.Lobby.InteractItem(itemName)
+        local remote = getRemote({"Remotes", "InteractItem"})
+        if remote then
+            return table.pack(remote:InvokeServer(itemName))
+        end
+        return {}
+    end
+
+    function API.Lobby.EquipTower(towerName)
+        return API.Lobby.InteractItem(towerName)
+    end
+
+    function API.Lobby.UnequipTower(towerName)
+        return API.Lobby.InteractItem(towerName)
+    end
+
+    --- Walk into an elevator by type (uses firetouchinterest)
+    function API.Lobby.EnterElevator(elevatorType)
+        local elevators = WS:FindFirstChild("Elevators")
+        if not elevators then return false end
+
+        local eName    = ELEVATOR_MAP[elevatorType] or elevatorType
+        local elevator = elevators:FindFirstChild(eName)
+        if not elevator then return false end
+
+        local entrance = elevator:FindFirstChild("Entrance")
+        if not entrance then return false end
+        if not entrance:FindFirstChild("TouchInterest") then return false end
+
+        local hrp = getHRP()
+        if not hrp then return false end
+
+        _firetouchinterest(hrp, entrance, 0)
+        task.wait(0.15)
+        _firetouchinterest(hrp, entrance, 1)
+        return true
+    end
+
+    --- Fire the Elevator remote to set up & start
+    function API.Lobby.JoinElevator(modifiers, mapName, playerCount)
+        local remote = getRemote({"Remotes", "Elevator"})
+        if remote then
+            remote:FireServer("FinishSetup", modifiers or {}, mapName or "Baseplate", playerCount or 1)
+            return true
+        end
+        return false
+    end
+
+    --- Simulate a lobby message via firesignal
+    function API.Lobby.SimulateMessage(text, color, sound)
+        local remote = getRemote({"Remotes", "Message"})
+        if remote and remote.OnClientEvent then
+            _firesignal(remote.OnClientEvent, text, color or Color3.new(1, 1, 1), sound or "")
         end
     end
 
-    State.LastError = errorData
-
-    Events.OnError:Fire(errorData)
-
-    warn("[TowerAPI]", errorData.Code, errorData.Message)
-
-    return errorData
-end
-
-local function success(data)
-    if type(data) == "table" then
-        data.Success = true
-        return data
+    function API.Lobby.GetMaps()
+        return API.Utils.GetMaps()
     end
 
-    return {
-        Success = true,
-        Value = data,
+    function API.Lobby.GetModifiers()
+        return API.Utils.GetModifiers()
+    end
+
+    -- ═══════════════════════════════════════════════════════════
+    --  GAME MODULE (In-Game only)
+    -- ═══════════════════════════════════════════════════════════
+    API.Game = {}
+
+    --- Vote for a difficulty: "Easy", "Normal", "Hard"
+    function API.Game.Vote(difficulty)
+        local remote = getRemote({"Events", "Game", "Vote"})
+        if remote then
+            remote:FireServer(difficulty or "Easy")
+            return true
+        end
+        return false
+    end
+
+    function API.Game.Skip()
+        local remote = getRemote({"Events", "Game", "Skip"})
+        if remote then
+            remote:FireServer()
+            return true
+        end
+        return false
+    end
+
+    --- Place a new tower by name at a CFrame position
+    function API.Game.PlaceTower(towerName, cframe)
+        local remote = getRemote({"Events", "Game", "PlaceTower"})
+        if remote then
+            return remote:InvokeServer(towerName, cframe)
+        end
+        return nil
+    end
+
+    --- Upgrade an existing tower Instance
+    function API.Game.UpgradeTower(towerInstance, cframe)
+        local remote = getRemote({"Events", "Game", "PlaceTower"})
+        if remote then
+            return remote:InvokeServer(towerInstance, cframe, true)
+        end
+        return nil
+    end
+
+    --- Upgrade a tower by its numeric index in workspace.Towers
+    function API.Game.UpgradeTowerByIndex(index, cframe)
+        local folder = WS:FindFirstChild("Towers")
+        if folder then
+            local tower = folder:FindFirstChild(tostring(index))
+            if tower then
+                return API.Game.UpgradeTower(tower, cframe)
+            end
+        end
+        return nil
+    end
+
+    --- Use a tower's ability (by Instance)
+    function API.Game.UseAbility(towerInstance, abilityArg)
+        local remote = getRemote({"Events", "Towers", "Ability"})
+        if remote then
+            return remote:InvokeServer(towerInstance, abilityArg)
+        end
+        return nil
+    end
+
+    --- Use ability by tower index
+    function API.Game.UseAbilityByIndex(index, abilityArg)
+        local folder = WS:FindFirstChild("Towers")
+        if folder then
+            local tower = folder:FindFirstChild(tostring(index))
+            if tower then
+                return API.Game.UseAbility(tower, abilityArg)
+            end
+        end
+        return nil
+    end
+
+    function API.Game.PauseGame()
+        local remote = getRemote({"Events", "Game", "PauseGame"})
+        if remote then
+            remote:FireServer()
+            return true
+        end
+        return false
+    end
+
+    function API.Game.Restart()
+        local remote = getRemote({"Events", "Game", "Restart"})
+        if remote then
+            remote:FireServer()
+            return true
+        end
+        return false
+    end
+
+    --- Simulate an in-game message via firesignal
+    function API.Game.SimulateMessage(text, color)
+        local remote = getRemote({"Events", "Other", "Message"})
+        if remote and remote.OnClientEvent then
+            _firesignal(remote.OnClientEvent, text, color or Color3.new(1, 0, 0))
+        end
+    end
+
+    --- Get a tower Instance by its index
+    function API.Game.GetTower(index)
+        local folder = WS:FindFirstChild("Towers")
+        if folder then
+            return folder:FindFirstChild(tostring(index))
+        end
+        return nil
+    end
+
+    function API.Game.GetAllTowers()
+        return API.Utils.GetTowerList()
+    end
+
+    function API.Game.GetTowerCount()
+        local folder = WS:FindFirstChild("Towers")
+        return folder and #folder:GetChildren() or 0
+    end
+
+    -- ═══════════════════════════════════════════════════════════
+    --  MACRO SYSTEM
+    -- ═══════════════════════════════════════════════════════════
+    API.Macro = {}
+
+    local macro = {
+        recording   = false,
+        playing     = false,
+        actions     = {},
+        startTime   = 0,
+        saved       = {},
+        oldNamecall = nil,
+        hooked      = false,
     }
-end
 
-local function deepCopy(value)
-    if type(value) ~= "table" then
-        return value
+    ---- Control ----
+
+    function API.Macro.StartRecording()
+        macro.recording = true
+        macro.actions   = {}
+        macro.startTime = tick()
     end
 
-    local copy = {}
-
-    for key, child in pairs(value) do
-        copy[deepCopy(key)] = deepCopy(child)
+    function API.Macro.StopRecording()
+        macro.recording = false
+        return macro.actions
     end
 
-    return copy
-end
-
---==================================================
--- CFRAMES
---==================================================
-
-local function serializeCFrame(cframe)
-    if typeof(cframe) ~= "CFrame" then
-        return nil
+    function API.Macro.IsRecording()
+        return macro.recording
     end
 
-    return {
-        cframe:GetComponents()
-    }
-end
-
-local function deserializeCFrame(data)
-    if type(data) ~= "table" then
-        return nil
+    function API.Macro.IsPlaying()
+        return macro.playing
     end
 
-    if #data ~= 12 then
-        return nil
+    function API.Macro.GetActions()
+        return macro.actions
     end
 
-    return CFrame.new(table.unpack(data))
-end
-
---==================================================
--- TOWER FOLDER
---==================================================
-
-local function getTowersFolder()
-    local folder = workspace:FindFirstChild("Towers")
-
-    if not folder then
-        return nil
+    function API.Macro.Clear()
+        macro.actions = {}
     end
 
-    return folder
-end
+    ---- Internal: record one action ----
 
-local function isTowerInstance(instance)
-    if not instance then
-        return false
-    end
-
-    if not instance:IsDescendantOf(workspace) then
-        return false
-    end
-
-    local folder = getTowersFolder()
-
-    if not folder then
-        return false
-    end
-
-    return instance.Parent == folder
-end
-
---==================================================
--- TOWER ATTRIBUTES
---==================================================
-
-local function getAttributeSafe(instance, attributeName, expectedType)
-    if not instance then
-        return nil
-    end
-
-    local value = instance:GetAttribute(attributeName)
-
-    if value == nil then
-        return nil
-    end
-
-    if expectedType and typeof(value) ~= expectedType then
-        return nil
-    end
-
-    return value
-end
-
-local function getTowerAttributes(tower)
-    if not tower then
-        return {
-            Level = nil,
-            Name = nil,
-            Owner = nil,
-            SellPrice = nil,
-            UpgradeName = nil,
+    local function record(actionType, args)
+        if not macro.recording then return end
+        macro.actions[#macro.actions + 1] = {
+            type = actionType,
+            args = args,
+            time = tick() - macro.startTime,
         }
     end
 
-    return {
-        Level = getAttributeSafe(tower, "Level", "number"),
-        Name = getAttributeSafe(tower, "Name", "string"),
-        Owner = getAttributeSafe(tower, "Owner", "string"),
-        SellPrice = getAttributeSafe(tower, "SellPrice", "number"),
-        UpgradeName = getAttributeSafe(tower, "UpgradeName", "string"),
-    }
-end
-
-function TowerAPI.GetTowerAttributes(towerID)
-    local tower = TowerAPI._ResolveTower(towerID)
-
-    if not tower then
-        return makeError(
-            "Tower could not be found.",
-            "TOWER_NOT_FOUND"
-        )
-    end
-
-    return success(getTowerAttributes(tower))
-end
-
-function TowerAPI.GetTowerLevel(towerID)
-    local tower = TowerAPI._ResolveTower(towerID)
-
-    if not tower then
-        return nil
-    end
-
-    return getAttributeSafe(tower, "Level", "number")
-end
-
-function TowerAPI.GetTowerName(towerID)
-    local tower = TowerAPI._ResolveTower(towerID)
-
-    if not tower then
-        return nil
-    end
-
-    return getAttributeSafe(tower, "Name", "string")
-end
-
-function TowerAPI.GetTowerOwner(towerID)
-    local tower = TowerAPI._ResolveTower(towerID)
-
-    if not tower then
-        return nil
-    end
-
-    return getAttributeSafe(tower, "Owner", "string")
-end
-
-function TowerAPI.GetTowerSellPrice(towerID)
-    local tower = TowerAPI._ResolveTower(towerID)
-
-    if not tower then
-        return nil
-    end
-
-    return getAttributeSafe(tower, "SellPrice", "number")
-end
-
-function TowerAPI.GetTowerUpgradeName(towerID)
-    local tower = TowerAPI._ResolveTower(towerID)
-
-    if not tower then
-        return nil
-    end
-
-    return getAttributeSafe(tower, "UpgradeName", "string")
-end
-
---==================================================
--- TOWER IDS
---==================================================
-
-function TowerAPI._GetTowerID(tower)
-    if not tower then
-        return nil
-    end
-
-    for id, instance in pairs(State.TowerInstances) do
-        if instance == tower then
-            return id
-        end
-    end
-
-    -- If this is a newly discovered tower, assign a permanent
-    -- placement-order ID.
-    local id = State.NextTowerID
-
-    State.NextTowerID += 1
-
-    State.TowerInstances[id] = tower
-    State.Towers[id] = {
-        Instance = tower,
-        ID = id,
-        Attributes = getTowerAttributes(tower),
-    }
-
-    -- New towers normally start at First.
-    State.TowerTargets[id] = 1
-
-    return id
-end
-
-function TowerAPI._ResolveTower(towerID)
-    if typeof(towerID) == "Instance" then
-        if isTowerInstance(towerID) then
-            return towerID
-        end
-
-        return nil
-    end
-
-    local numericID = tonumber(towerID)
-
-    if not numericID then
-        return nil
-    end
-
-    local cached = State.TowerInstances[numericID]
-
-    if cached and cached.Parent then
-        return cached
-    end
-
-    local folder = getTowersFolder()
-
-    if not folder then
-        return nil
-    end
-
-    -- The game itself uses "1", "2", "3", etc.
-    local tower = folder:FindFirstChild(tostring(numericID))
-
-    if tower and isTowerInstance(tower) then
-        State.TowerInstances[numericID] = tower
-
-        if not State.Towers[numericID] then
-            State.Towers[numericID] = {
-                Instance = tower,
-                ID = numericID,
-                Attributes = getTowerAttributes(tower),
-            }
-        end
-
-        if not State.TowerTargets[numericID] then
-            State.TowerTargets[numericID] = 1
-        end
-
-        return tower
-    end
-
-    return nil
-end
-
-function TowerAPI.GetTower(towerID)
-    return TowerAPI._ResolveTower(towerID)
-end
-
-function TowerAPI.GetTowers()
-    local result = {}
-
-    local folder = getTowersFolder()
-
-    if not folder then
-        return result
-    end
-
-    for _, tower in ipairs(folder:GetChildren()) do
-        if isTowerInstance(tower) then
-            local id = TowerAPI._GetTowerID(tower)
-
-            result[#result + 1] = {
-                ID = id,
-                Instance = tower,
-                Attributes = getTowerAttributes(tower),
-                Target = TowerAPI.GetTarget(id),
-            }
-        end
-    end
-
-    table.sort(result, function(a, b)
-        return a.ID < b.ID
-    end)
-
-    return result
-end
-
-function TowerAPI.RefreshTowers()
-    local folder = getTowersFolder()
-
-    if not folder then
-        return makeError(
-            "workspace.Towers does not exist.",
-            "TOWERS_FOLDER_MISSING"
-        )
-    end
-
-    local seen = {}
-
-    for _, tower in ipairs(folder:GetChildren()) do
-        if isTowerInstance(tower) then
-            local id = TowerAPI._GetTowerID(tower)
-
-            seen[id] = true
-
-            State.Towers[id] = {
-                Instance = tower,
-                ID = id,
-                Attributes = getTowerAttributes(tower),
-            }
-
-            if not State.TowerTargets[id] then
-                State.TowerTargets[id] = 1
-            end
-        end
-    end
-
-    -- Remove references to towers that no longer exist.
-    for id, instance in pairs(State.TowerInstances) do
-        if not seen[id] and (not instance or not instance.Parent) then
-            State.TowerInstances[id] = nil
-            State.Towers[id] = nil
-            State.TowerTargets[id] = nil
-        end
-    end
-
-    return success(TowerAPI.GetTowers())
-end
-
---==================================================
--- REMOTES
---==================================================
-
-local EventsFolder = ReplicatedStorage:WaitForChild("Events")
-local GameEvents = EventsFolder:WaitForChild("Game")
-
-local PlaceTowerRemote = GameEvents:WaitForChild("PlaceTower")
-local SellTowerRemote = GameEvents:WaitForChild("SellTower")
-local SkipRemote = GameEvents:WaitForChild("Skip")
-local RestartRemote = GameEvents:WaitForChild("Restart")
-local VoteRemote = GameEvents:WaitForChild("Vote")
-local ChangeTargetRemote = GameEvents:WaitForChild("ChangeTarget")
-
-local TowerEvents = EventsFolder:WaitForChild("Towers")
-local AbilityRemote = TowerEvents:WaitForChild("Ability")
-
-local RemotesFolder = ReplicatedStorage:WaitForChild("Remotes")
-
-local GetDataRemote = RemotesFolder:WaitForChild("GetData")
-local ElevatorRemote = RemotesFolder:WaitForChild("Elevator")
-
-local DialogueRemote = GameEvents:FindFirstChild("Dialogue")
-
--- The game's client message event.
--- This is the same variable used by queue_on_teleport.
-do
-    local OtherEvents = EventsFolder:FindFirstChild("Other")
-
-    if OtherEvents then
-        MessageRemote = OtherEvents:FindFirstChild("Message")
-    end
-end
-
-local MapsFolder = ReplicatedStorage:FindFirstChild("Maps")
-local ModsModule = ReplicatedStorage:FindFirstChild("Mods")
-
---==================================================
--- ACTION RECORDING
---==================================================
-
-local function recordAction(action)
-    if not Config.AutoRecord or not State.Recording then
-        return
-    end
-
-    State.CurrentAction += 1
-
-    action.Index = State.CurrentAction
-    action.Time = os.clock() - (State.RecordingStarted or os.clock())
-
-    table.insert(State.CurrentReplay.Actions, action)
-
-    Events.OnAction:Fire(action)
-end
-
-function TowerAPI.StartRecording()
-    if State.Recording then
-        return makeError(
-            "Already recording.",
-            "ALREADY_RECORDING"
-        )
-    end
-
-    State.Recording = true
-    State.RecordingStarted = os.clock()
-    State.CurrentAction = 0
-
-    State.CurrentReplay = {
-        Version = 1,
-        Created = os.time(),
-        Actions = {},
-    }
-
-    return success(State.CurrentReplay)
-end
-
-function TowerAPI.StopRecording()
-    if not State.Recording then
-        return makeError(
-            "Not currently recording.",
-            "NOT_RECORDING"
-        )
-    end
-
-    State.Recording = false
-
-    return success(deepCopy(State.CurrentReplay))
-end
-
-function TowerAPI.GetRecording()
-    return deepCopy(State.CurrentReplay)
-end
-
---==================================================
--- WAIT FOR TOWER
---==================================================
-
-local function waitForNewTower(previousTowers, timeout)
-    local folder = getTowersFolder()
-
-    if not folder then
-        return nil
-    end
-
-    local start = os.clock()
-
-    while os.clock() - start < timeout do
-        for _, tower in ipairs(folder:GetChildren()) do
-            if isTowerInstance(tower) and not previousTowers[tower] then
-                return tower
-            end
-        end
-
-        task.wait(Config.ConditionInterval)
-    end
-
-    return nil
-end
-
---==================================================
--- PLACE
---==================================================
-
-function TowerAPI.Place(towerName, cframe)
-    if type(towerName) ~= "string" then
-        return makeError(
-            "towerName must be a string.",
-            "INVALID_TOWER_NAME"
-        )
-    end
-
-    if typeof(cframe) ~= "CFrame" then
-        return makeError(
-            "cframe must be a CFrame.",
-            "INVALID_CFRAME"
-        )
-    end
-
-    local folder = getTowersFolder()
-
-    local before = {}
-
-    if folder then
-        for _, tower in ipairs(folder:GetChildren()) do
-            before[tower] = true
-        end
-    end
-
-    if Config.DryRun then
-        debugPrint("DRY RUN Place", towerName, cframe)
-
-        recordAction({
-            Type = "Place",
-            TowerName = towerName,
-            CFrame = serializeCFrame(cframe),
-        })
-
-        return success({
-            DryRun = true,
-        })
-    end
-
-    local ok, result = pcall(function()
-        return PlaceTowerRemote:InvokeServer(
-            towerName,
-            cframe
-        )
-    end)
-
-    if not ok then
-        return makeError(
-            result,
-            "PLACE_FAILED"
-        )
-    end
-
-    local tower = waitForNewTower(
-        before,
-        Config.TowerDetectionTimeout
-    )
-
-    if tower then
-        local id = TowerAPI._GetTowerID(tower)
-
-        State.Towers[id] = {
-            Instance = tower,
-            ID = id,
-            Attributes = getTowerAttributes(tower),
+    ---- Manual action insertion ----
+
+    function API.Macro.AddAction(actionType, args, delayAfter)
+        local lastTime = #macro.actions > 0 and macro.actions[#macro.actions].time or 0
+        macro.actions[#macro.actions + 1] = {
+            type = actionType,
+            args = args,
+            time = lastTime + (delayAfter or 0),
         }
-
-        State.TowerTargets[id] = 1
-
-        Events.OnTowerAdded:Fire(id, tower)
     end
 
-    recordAction({
-        Type = "Place",
-        TowerName = towerName,
-        CFrame = serializeCFrame(cframe),
-        Tower = tower and TowerAPI._GetTowerID(tower) or nil,
-    })
+    ---- Recordable wrappers (Lobby) ----
 
-    return success({
-        Result = result,
-        Tower = tower,
-        ID = tower and TowerAPI._GetTowerID(tower) or nil,
-    })
-end
-
---==================================================
--- UPGRADE
---==================================================
-
-function TowerAPI.Upgrade(towerID, cframe)
-    local tower = TowerAPI._ResolveTower(towerID)
-
-    if not tower then
-        return makeError(
-            "Tower does not exist.",
-            "TOWER_NOT_FOUND"
-        )
+    function API.Macro.RecordInteractItem(itemName)
+        record("InteractItem", { itemName = itemName })
+        return API.Lobby.InteractItem(itemName)
     end
 
-    if typeof(cframe) ~= "CFrame" then
-        return makeError(
-            "cframe must be a CFrame.",
-            "INVALID_CFRAME"
-        )
+    function API.Macro.RecordJoinElevator(modifiers, mapName, playerCount)
+        record("JoinElevator", { modifiers = modifiers, mapName = mapName, playerCount = playerCount })
+        return API.Lobby.JoinElevator(modifiers, mapName, playerCount)
     end
 
-    local id = TowerAPI._GetTowerID(tower)
+    ---- Recordable wrappers (Game) ----
 
-    if Config.DryRun then
-        recordAction({
-            Type = "Upgrade",
-            Tower = id,
-            CFrame = serializeCFrame(cframe),
-        })
-
-        return success({
-            DryRun = true,
-        })
+    function API.Macro.RecordVote(difficulty)
+        record("Vote", { difficulty = difficulty })
+        return API.Game.Vote(difficulty)
     end
 
-    local ok, result = pcall(function()
-        return PlaceTowerRemote:InvokeServer(
-            tower,
-            cframe,
-            true
-        )
-    end)
-
-    if not ok then
-        return makeError(
-            result,
-            "UPGRADE_FAILED"
-        )
+    function API.Macro.RecordSkip()
+        record("Skip", {})
+        return API.Game.Skip()
     end
 
-    task.wait()
-
-    State.Towers[id] = {
-        Instance = tower,
-        ID = id,
-        Attributes = getTowerAttributes(tower),
-    }
-
-    recordAction({
-        Type = "Upgrade",
-        Tower = id,
-        CFrame = serializeCFrame(cframe),
-    })
-
-    return success({
-        Result = result,
-        ID = id,
-        Attributes = getTowerAttributes(tower),
-    })
-end
-
---==================================================
--- SELL
---==================================================
-
-function TowerAPI.Sell(towerID)
-    local tower = TowerAPI._ResolveTower(towerID)
-
-    if not tower then
-        return makeError(
-            "Tower does not exist.",
-            "TOWER_NOT_FOUND"
-        )
+    function API.Macro.RecordPlaceTower(towerName, cframe)
+        record("PlaceTower", { towerName = towerName, cframe = cframeToTable(cframe) })
+        return API.Game.PlaceTower(towerName, cframe)
     end
 
-    local id = TowerAPI._GetTowerID(tower)
-
-    if Config.DryRun then
-        recordAction({
-            Type = "Sell",
-            Tower = id,
-        })
-
-        return success({
-            DryRun = true,
-        })
+    function API.Macro.RecordUpgradeTower(towerIndex, cframe)
+        record("UpgradeTower", { towerIndex = towerIndex, cframe = cframeToTable(cframe) })
+        return API.Game.UpgradeTowerByIndex(towerIndex, cframe)
     end
 
-    local ok, result = pcall(function()
-        return SellTowerRemote:InvokeServer(tower)
-    end)
-
-    if not ok then
-        return makeError(
-            result,
-            "SELL_FAILED"
-        )
+    function API.Macro.RecordUseAbility(towerIndex, abilityArg)
+        record("UseAbility", { towerIndex = towerIndex, abilityArg = abilityArg })
+        return API.Game.UseAbilityByIndex(towerIndex, abilityArg)
     end
 
-    recordAction({
-        Type = "Sell",
-        Tower = id,
-    })
-
-    -- IMPORTANT:
-    -- Do NOT decrement NextTowerID.
-    --
-    -- Selling tower 3 means the next new tower remains 4.
-    State.TowerInstances[id] = nil
-    State.Towers[id] = nil
-    State.TowerTargets[id] = nil
-
-    Events.OnTowerRemoved:Fire(id, tower)
-
-    return success({
-        Result = result,
-        ID = id,
-    })
-end
-
---==================================================
--- TARGETING
---==================================================
-
-function TowerAPI.GetTargetOrder()
-    return deepCopy(Config.TargetOrder)
-end
-
-function TowerAPI.GetTarget(towerID)
-    local tower = TowerAPI._ResolveTower(towerID)
-
-    if not tower then
-        return nil
+    function API.Macro.RecordPauseGame()
+        record("PauseGame", {})
+        return API.Game.PauseGame()
     end
 
-    local id = TowerAPI._GetTowerID(tower)
-    local index = State.TowerTargets[id] or 1
-
-    return Config.TargetOrder[index]
-end
-
-function TowerAPI.CycleTarget(towerID)
-    local tower = TowerAPI._ResolveTower(towerID)
-
-    if not tower then
-        return makeError(
-            "Tower does not exist.",
-            "TOWER_NOT_FOUND"
-        )
+    function API.Macro.RecordRestart()
+        record("Restart", {})
+        return API.Game.Restart()
     end
 
-    local id = TowerAPI._GetTowerID(tower)
+    ---- Replay ----
 
-    local currentIndex = State.TowerTargets[id] or 1
+    function API.Macro.Replay(opts)
+        --[[
+            opts = {
+                onStep     = function(stepIndex, action, totalSteps) end,
+                onComplete = function() end,
+                speed      = 1,    -- 1 = normal, 2 = 2×, 0.5 = half
+                loop       = false, -- repeat after finish
+            }
+        ]]
+        if macro.playing then return false end
+        if #macro.actions == 0 then return false end
 
-    local newIndex = currentIndex + 1
+        local o = type(opts) == "table" and opts or {}
+        macro.playing = true
 
-    if newIndex > #Config.TargetOrder then
-        newIndex = 1
-    end
+        local speed      = o.speed or 1
+        local loop       = o.loop or false
+        local onStep     = o.onStep
+        local onComplete = o.onComplete
 
-    if Config.DryRun then
-        State.TowerTargets[id] = newIndex
+        local function runOnce()
+            local start = tick()
+            for i, action in ipairs(macro.actions) do
+                if not macro.playing then return false end
 
-        recordAction({
-            Type = "CycleTarget",
-            Tower = id,
-            Target = Config.TargetOrder[newIndex],
-        })
+                -- Wait until scheduled time (adjusted by speed)
+                local target = start + (action.time / speed)
+                local now    = tick()
+                if target > now then
+                    task.wait(target - now)
+                end
 
-        return success({
-            Target = Config.TargetOrder[newIndex],
-        })
-    end
+                -- Execute the action
+                local a = action.args
+                local ok, err = pcall(function()
+                    if action.type == "Vote" then
+                        API.Game.Vote(a.difficulty)
+                    elseif action.type == "Skip" then
+                        API.Game.Skip()
+                    elseif action.type == "PlaceTower" then
+                        API.Game.PlaceTower(a.towerName, tableToCFrame(a.cframe))
+                    elseif action.type == "UpgradeTower" then
+                        API.Game.UpgradeTowerByIndex(a.towerIndex, tableToCFrame(a.cframe))
+                    elseif action.type == "UseAbility" then
+                        API.Game.UseAbilityByIndex(a.towerIndex, a.abilityArg)
+                    elseif action.type == "PauseGame" then
+                        API.Game.PauseGame()
+                    elseif action.type == "Restart" then
+                        API.Game.Restart()
+                    elseif action.type == "InteractItem" then
+                        API.Lobby.InteractItem(a.itemName)
+                    elseif action.type == "JoinElevator" then
+                        API.Lobby.JoinElevator(a.modifiers, a.mapName, a.playerCount)
+                    end
+                end)
 
-    local ok, result = pcall(function()
-        return ChangeTargetRemote:InvokeServer(tower)
-    end)
+                if not ok then
+                    warn("[TD-API] Replay action #" .. i .. " failed: " .. tostring(err))
+                end
 
-    if not ok then
-        return makeError(
-            result,
-            "CHANGE_TARGET_FAILED"
-        )
-    end
-
-    State.TowerTargets[id] = newIndex
-
-    local target = Config.TargetOrder[newIndex]
-
-    recordAction({
-        Type = "CycleTarget",
-        Tower = id,
-        Target = target,
-    })
-
-    return success({
-        Result = result,
-        Target = target,
-        ID = id,
-    })
-end
-
-function TowerAPI.SetTarget(towerID, targetType)
-    if type(targetType) ~= "string" then
-        return makeError(
-            "targetType must be a string.",
-            "INVALID_TARGET"
-        )
-    end
-
-    local desiredIndex
-
-    for index, name in ipairs(Config.TargetOrder) do
-        if string.lower(name) == string.lower(targetType) then
-            desiredIndex = index
-            break
+                if onStep then onStep(i, action, #macro.actions) end
+            end
+            return true
         end
-    end
 
-    if not desiredIndex then
-        return makeError(
-            "Invalid target: " .. targetType,
-            "INVALID_TARGET"
-        )
-    end
+        spawn(function()
+            repeat
+                runOnce()
+                if loop and macro.playing then
+                    task.wait(1)
+                end
+            until not loop or not macro.playing
 
-    local tower = TowerAPI._ResolveTower(towerID)
-
-    if not tower then
-        return makeError(
-            "Tower does not exist.",
-            "TOWER_NOT_FOUND"
-        )
-    end
-
-    local id = TowerAPI._GetTowerID(tower)
-    local currentIndex = State.TowerTargets[id] or 1
-
-    local steps = (desiredIndex - currentIndex) % #Config.TargetOrder
-
-    if Config.DryRun then
-        State.TowerTargets[id] = desiredIndex
-
-        recordAction({
-            Type = "SetTarget",
-            Tower = id,
-            Target = Config.TargetOrder[desiredIndex],
-            Steps = steps,
-        })
-
-        return success({
-            Target = Config.TargetOrder[desiredIndex],
-            Steps = steps,
-        })
-    end
-
-    for _ = 1, steps do
-        local ok, result = pcall(function()
-            return ChangeTargetRemote:InvokeServer(tower)
+            macro.playing = false
+            if onComplete then onComplete() end
         end)
 
-        if not ok then
-            return makeError(
-                result,
-                "CHANGE_TARGET_FAILED"
-            )
+        return true
+    end
+
+    function API.Macro.StopReplay()
+        macro.playing = false
+    end
+
+    ---- Save / Load / Delete / List ----
+
+    function API.Macro.Save(name)
+        macro.saved[name] = {
+            actions    = macro.actions,
+            timestamp  = os.time(),
+            actionCount = #macro.actions,
+        }
+        return true
+    end
+
+    function API.Macro.Load(name)
+        local m = macro.saved[name]
+        if m then
+            macro.actions = m.actions
+            return true
+        end
+        return false
+    end
+
+    function API.Macro.Delete(name)
+        macro.saved[name] = nil
+    end
+
+    function API.Macro.ListSaved()
+        local out = {}
+        for name, data in pairs(macro.saved) do
+            out[#out + 1] = {
+                name       = name,
+                actionCount = data.actionCount or #data.actions,
+                timestamp  = data.timestamp,
+            }
+        end
+        table.sort(out, function(a, b) return a.timestamp > b.timestamp end)
+        return out
+    end
+
+    ---- Export / Import (JSON, CFrame-safe) ----
+
+    function API.Macro.Export(name)
+        local m = name and macro.saved[name] and macro.saved[name].actions or macro.actions
+        local ok, json = pcall(function()
+            return HttpService:JSONEncode(m)
+        end)
+        return ok and json or nil
+    end
+
+    function API.Macro.Import(jsonString)
+        local ok, data = pcall(function()
+            return HttpService:JSONDecode(jsonString)
+        end)
+        if ok and type(data) == "table" then
+            macro.actions = data
+            return true
+        end
+        return false
+    end
+
+    ---- Auto-hook recording (hooks __namecall on remotes) ----
+
+    function API.Macro.InstallHooks()
+        if macro.hooked then return false end
+        if not _hookmetamethod or not _getnamecallmethod then
+            warn("[TD-API] Cannot install hooks: hookmetamethod/getnamecallmethod not available")
+            return false
         end
 
-        task.wait()
+        macro.oldNamecall = _hookmetamethod(game, "__namecall", _newcclosure(function(self, ...)
+            local method = _getnamecallmethod()
+
+            if macro.recording and (method == "FireServer" or method == "InvokeServer") then
+                local args = { ... }
+                local name = self.Name
+
+                -- Lobby remotes
+                if name == "InteractItem" and method == "InvokeServer" then
+                    record("InteractItem", { itemName = args[1] })
+
+                elseif name == "Elevator" and method == "FireServer" then
+                    -- args: "FinishSetup", modifiers, mapName, playerCount
+                    record("JoinElevator", {
+                        modifiers    = args[2],
+                        mapName      = args[3],
+                        playerCount  = args[4],
+                    })
+
+                -- Game remotes
+                elseif name == "Vote" and method == "FireServer" then
+                    record("Vote", { difficulty = args[1] })
+
+                elseif name == "Skip" and method == "FireServer" then
+                    record("Skip", {})
+
+                elseif name == "PlaceTower" and method == "InvokeServer" then
+                    if type(args[1]) == "string" then
+                        -- New tower placement
+                        record("PlaceTower", {
+                            towerName = args[1],
+                            cframe    = cframeToTable(args[2]),
+                        })
+                    elseif typeof(args[1]) == "Instance" then
+                        -- Upgrade existing tower
+                        record("UpgradeTower", {
+                            towerIndex = args[1].Name,
+                            cframe     = cframeToTable(args[2]),
+                        })
+                    end
+
+                elseif name == "Ability" and method == "InvokeServer" then
+                    local idx = typeof(args[1]) == "Instance" and args[1].Name or tostring(args[1])
+                    record("UseAbility", { towerIndex = idx, abilityArg = args[2] })
+
+                elseif name == "PauseGame" and method == "FireServer" then
+                    record("PauseGame", {})
+
+                elseif name == "Restart" and method == "FireServer" then
+                    record("Restart", {})
+                end
+            end
+
+            return macro.oldNamecall(self, ...)
+        end))
+
+        macro.hooked = true
+        return true
     end
 
-    State.TowerTargets[id] = desiredIndex
-
-    recordAction({
-        Type = "SetTarget",
-        Tower = id,
-        Target = Config.TargetOrder[desiredIndex],
-        Steps = steps,
-    })
-
-    return success({
-        Target = Config.TargetOrder[desiredIndex],
-        Steps = steps,
-        ID = id,
-    })
-end
-
---==================================================
--- ABILITY
---==================================================
-
-function TowerAPI.UseAbility(towerID)
-    local tower = TowerAPI._ResolveTower(towerID)
-
-    if not tower then
-        return makeError(
-            "Tower does not exist.",
-            "TOWER_NOT_FOUND"
-        )
+    function API.Macro.UninstallHooks()
+        if not macro.hooked or not macro.oldNamecall then return false end
+        _hookmetamethod(game, "__namecall", macro.oldNamecall)
+        macro.oldNamecall = nil
+        macro.hooked      = false
+        return true
     end
 
-    local id = TowerAPI._GetTowerID(tower)
+    -- ═══════════════════════════════════════════════════════════
+    --  TELEPORT SYSTEM
+    -- ═══════════════════════════════════════════════════════════
+    API.Teleport = {}
 
-    if Config.DryRun then
-        recordAction({
-            Type = "Ability",
-            Tower = id,
-        })
-
-        return success({
-            DryRun = true,
-        })
+    --- Queue arbitrary Lua source to execute after teleport
+    function API.Teleport.QueueOnTeleport(scriptSource)
+        _queue_on_teleport(scriptSource)
+        return true
     end
 
-    local ok, result = pcall(function()
-        return AbilityRemote:InvokeServer(
-            tower,
-            nil
-        )
-    end)
-
-    if not ok then
-        return makeError(
-            result,
-            "ABILITY_FAILED"
-        )
+    --- Queue the API itself to re-initialize after teleport
+    --- Pass your loadstring source so it re-runs automatically
+    function API.Teleport.QueueAPI(apiLoadstringSource)
+        _queue_on_teleport(apiLoadstringSource)
+        return true
     end
 
-    recordAction({
-        Type = "Ability",
-        Tower = id,
-    })
-
-    return success({
-        Result = result,
-        ID = id,
-    })
-end
-
---==================================================
--- CASH
---==================================================
-
-local function parseCash(value)
-    if value == nil then
-        return nil
+    --- Simple auto-rejoin: teleport back to current PlaceId after kick/end
+    function API.Teleport.AutoRejoin()
+        _queue_on_teleport([[
+            local TS = game:GetService("TeleportService")
+            local Pl = game:GetService("Players")
+            task.wait(3)
+            TS:Teleport(]] .. game.PlaceId .. [[, Pl.LocalPlayer)
+        ]])
     end
 
-    value = tostring(value)
+    --- Full farm loop: lobby → game → lobby → game …
+    --- Provide the full script that should run after every teleport
+    function API.Teleport.QueueFarmLoop(fullScriptSource)
+        _queue_on_teleport(fullScriptSource)
+    end
 
-    value = value:gsub("%$", "")
-    value = value:gsub(",", "")
-    value = value:gsub("%s+", "")
+    -- ═══════════════════════════════════════════════════════════
+    --  EVENT LISTENERS
+    -- ═══════════════════════════════════════════════════════════
+    API.Events = {}
 
-    return tonumber(value)
-end
-
-function TowerAPI.GetMoney()
-    local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
-
-    if leaderstats then
-        local cash = leaderstats:FindFirstChild("Cash")
-
-        if cash then
-            local value = parseCash(cash.Value)
-
-            if value ~= nil then
-                return value
+    --- Connect to message events (works in both lobby and game)
+    function API.Events.OnMessage(callback)
+        if API.IsLobby then
+            local remote = getRemote({"Remotes", "Message"})
+            if remote then
+                remote.OnClientEvent:Connect(function(...) callback(...) end)
+            end
+        elseif API.IsInGame then
+            local remote = getRemote({"Events", "Other", "Message"})
+            if remote then
+                remote.OnClientEvent:Connect(function(...) callback(...) end)
             end
         end
     end
 
-    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    --- Fire when a new tower appears in workspace.Towers
+    function API.Events.OnTowerPlaced(callback)
+        local folder = WS:FindFirstChild("Towers")
+        if folder then
+            folder.ChildAdded:Connect(function(child) callback(child) end)
+        else
+            -- Deferred: wait for Towers folder to exist
+            spawn(function()
+                local f = WS:WaitForChild("Towers", 120)
+                if f then f.ChildAdded:Connect(function(child) callback(child) end) end
+            end)
+        end
+    end
 
-    if playerGui then
-        local gameGui = playerGui:FindFirstChild("GameGUI")
+    --- Fire when a tower is removed from workspace.Towers
+    function API.Events.OnTowerRemoved(callback)
+        local folder = WS:FindFirstChild("Towers")
+        if folder then
+            folder.ChildRemoved:Connect(function(child) callback(child) end)
+        else
+            spawn(function()
+                local f = WS:WaitForChild("Towers", 120)
+                if f then f.ChildRemoved:Connect(function(child) callback(child) end) end
+            end)
+        end
+    end
 
-        if gameGui then
-            local stats = gameGui:FindFirstChild("Stats")
+    -- ═══════════════════════════════════════════════════════════
+    --  DATA CACHE
+    -- ═══════════════════════════════════════════════════════════
+    API.Data = { Cached = {} }
 
-            if stats then
-                local cash = stats:FindFirstChild("Cash")
+    function API.Data.Refresh()
+        if not API.IsLobby then return false end
+        local raw = API.Lobby.GetData()
+        if type(raw) ~= "table" then return false end
 
-                if cash then
-                    local amount = cash:FindFirstChild("Amount")
+        -- Handle both {OwnedTowers=...} and {{OwnedTowers=...}}
+        local d = raw.OwnedTowers and raw or (raw[1] and raw[1].OwnedTowers and raw[1])
+        if type(d) ~= "table" then return false end
 
-                    if amount and amount:IsA("TextLabel") then
-                        return parseCash(amount.Text)
+        API.Data.Cached        = d
+        API.Data.OwnedTowers   = d.OwnedTowers   or {}
+        API.Data.TowersEquipped = d.TowersEquipped or {}
+        API.Data.Bricks        = d.Bricks        or 0
+        API.Data.Bux           = d.Bux           or 0
+        API.Data.Level         = d.Level         or 1
+        API.Data.XP            = d.XP            or 0
+        API.Data.BeatenMaps    = d.BeatenMaps    or {}
+        API.Data.Beaten        = d.Beaten        or {}
+        API.Data.OwnedSkins    = d.OwnedSkins    or {}
+        API.Data.Mastery       = d.Mastery       or {}
+        API.Data.Settings      = d.Settings      or {}
+        API.Data.OwnedTags     = d.OwnedTags     or {}
+        API.Data.EquippedTags  = d.Equippedtags  or d.EquippedTags or ""
+
+        return true
+    end
+
+    -- Auto-cache on lobby
+    if API.IsLobby then
+        task.spawn(function()
+            pcall(API.Data.Refresh)
+        end)
+    end
+
+    -- ═══════════════════════════════════════════════════════════
+    --  AUTO-FARM TEMPLATE
+    -- ═══════════════════════════════════════════════════════════
+    API.Farm = {}
+
+    local farmState = { running = false, config = {} }
+
+    function API.Farm.Start(config)
+        --[[
+            config = {
+                modifiers    = {},          -- modifier table
+                map          = "Baseplate", -- map name
+                playerCount  = 1,
+                difficulty   = "Easy",
+                towers       = {
+                    { name = "Battler", cframe = CFrame.new(...), expectedIndex = 1, upgrades = 2, delay = 1 },
+                    ...
+                },
+                autoRestart  = true,
+                restartDelay = 60,
+            }
+        ]]
+        if farmState.running then return false end
+        farmState.running = true
+        farmState.config  = config or {}
+
+        local cfg = farmState.config
+
+        spawn(function()
+            while farmState.running do
+                task.wait(1)
+
+                if game.PlaceId == PLACE_LOBBY then
+                    -- Join match
+                    API.Lobby.JoinElevator(cfg.modifiers or {}, cfg.map or "Baseplate", cfg.playerCount or 1)
+
+                    -- Wait for teleport
+                    local t = 30
+                    while game.PlaceId ~= PLACE_INGAME and t > 0 and farmState.running do
+                        task.wait(1)
+                        t = t - 1
+                    end
+
+                elseif game.PlaceId == PLACE_INGAME then
+                    -- Vote
+                    if cfg.difficulty then
+                        API.Game.Vote(cfg.difficulty)
+                        task.wait(2)
+                    end
+
+                    -- Place towers
+                    if cfg.towers then
+                        for _, tc in ipairs(cfg.towers) do
+                            if not farmState.running then break end
+
+                            API.Game.PlaceTower(tc.name, tc.cframe)
+                            task.wait(tc.delay or 1)
+
+                            -- Upgrades
+                            if tc.upgrades then
+                                for u = 1, tc.upgrades do
+                                    if not farmState.running then break end
+                                    task.wait(tc.upgradeDelay or 2)
+                                    API.Game.UpgradeTowerByIndex(tc.expectedIndex or u, tc.cframe)
+                                end
+                            end
+                        end
+                    end
+
+                    -- Wait & restart
+                    if cfg.autoRestart then
+                        task.wait(cfg.restartDelay or 60)
+                        API.Game.Restart()
+                    end
+
+                    -- Wait for teleport back to lobby
+                    local t = 30
+                    while game.PlaceId ~= PLACE_LOBBY and t > 0 and farmState.running do
+                        task.wait(1)
+                        t = t - 1
                     end
                 end
             end
-        end
-    end
-
-    return nil
-end
-
---==================================================
--- GAME ACTIONS
---==================================================
-
-function TowerAPI.Skip()
-    if not Config.DryRun then
-        local ok, result = pcall(function()
-            return SkipRemote:FireServer()
         end)
 
-        if not ok then
-            return makeError(result, "SKIP_FAILED")
-        end
+        return true
     end
 
-    recordAction({
-        Type = "Skip",
-    })
-
-    return success()
-end
-
-function TowerAPI.Restart()
-    if not Config.DryRun then
-        local ok, result = pcall(function()
-            return RestartRemote:FireServer()
-        end)
-
-        if not ok then
-            return makeError(result, "RESTART_FAILED")
-        end
+    function API.Farm.Stop()
+        farmState.running = false
     end
 
-    recordAction({
-        Type = "Restart",
-    })
-
-    return success()
-end
-
-function TowerAPI.Vote(mode)
-    if type(mode) ~= "string" then
-        return makeError(
-            "Vote mode must be a string.",
-            "INVALID_VOTE"
-        )
+    function API.Farm.IsRunning()
+        return farmState.running
     end
 
-    if not Config.DryRun then
-        local ok, result = pcall(function()
-            return VoteRemote:FireServer(mode)
-        end)
-
-        if not ok then
-            return makeError(result, "VOTE_FAILED")
-        end
-    end
-
-    recordAction({
-        Type = "Vote",
-        Mode = mode,
-    })
-
-    return success()
-end
-
---==================================================
--- DATA
---==================================================
-
-function TowerAPI.GetData()
-    if Config.DryRun then
-        return success({})
-    end
-
-    local ok, result = pcall(function()
-        return GetDataRemote:InvokeServer()
-    end)
-
-    if not ok then
-        return makeError(
-            result,
-            "GET_DATA_FAILED"
-        )
-    end
-
-    return success(result)
-end
-
---==================================================
--- MAPS
---==================================================
-
-function TowerAPI.GetMaps()
-    if not MapsFolder then
-        return {}
-    end
-
-    return MapsFolder:GetChildren()
-end
-
-function TowerAPI.GetMapNames()
-    local names = {}
-
-    for _, map in ipairs(TowerAPI.GetMaps()) do
-        table.insert(names, map.Name)
-    end
-
-    table.sort(names)
-
-    return names
-end
-
-function TowerAPI.GetMap(name)
-    if not MapsFolder or type(name) ~= "string" then
-        return nil
-    end
-
-    return MapsFolder:FindFirstChild(name)
-end
-
---==================================================
--- MODIFIERS
---==================================================
-
-function TowerAPI.GetModifiers()
-    if not ModsModule then
-        return {}
-    end
-
-    local ok, result = pcall(function()
-        return require(ModsModule)
-    end)
-
-    if not ok then
-        return makeError(
-            result,
-            "MODIFIERS_FAILED"
-        )
-    end
-
-    return result
-end
-
-function TowerAPI.GetModifier(name)
-    for _, modifier in ipairs(TowerAPI.GetModifiers()) do
-        if modifier.Name == name then
-            return modifier
-        end
-    end
-
-    return nil
-end
-
-function TowerAPI.GetModifierNames()
-    local names = {}
-
-    for _, modifier in ipairs(TowerAPI.GetModifiers()) do
-        if modifier.Name then
-            table.insert(names, modifier.Name)
-        end
-    end
-
-    return names
-end
-
---==================================================
--- ELEVATOR
---==================================================
-
-function TowerAPI.FinishElevatorSetup(
-    mapName,
-    playerAmount,
-    modifiers
-)
-    mapName = mapName or "Baseplate"
-    playerAmount = playerAmount or 1
-    modifiers = modifiers or {}
-
-    if not Config.DryRun then
-        local ok, result = pcall(function()
-            return ElevatorRemote:FireServer(
-                "FinishSetup",
-                modifiers,
-                mapName,
-                playerAmount
-            )
-        end)
-
-        if not ok then
-            return makeError(
-                result,
-                "ELEVATOR_FAILED"
-            )
-        end
-    end
-
-    recordAction({
-        Type = "ElevatorSetup",
-        Map = mapName,
-        PlayerAmount = playerAmount,
-        Modifiers = deepCopy(modifiers),
-    })
-
-    return success()
-end
-
---==================================================
--- DIALOGUE
---==================================================
-
-function TowerAPI.GetDialogueHistory()
-    return deepCopy(State.DialogueHistory)
-end
-
---==================================================
--- CLIENT MESSAGES
---==================================================
-
-function TowerAPI.GetMessageHistory()
-    return deepCopy(State.MessageHistory)
-end
-
---==================================================
--- CONDITIONS
---==================================================
-
-function TowerAPI.Wait(seconds)
-    seconds = tonumber(seconds) or 0
-
-    if seconds > 0 then
-        task.wait(seconds)
-    end
-
-    recordAction({
-        Type = "Wait",
-        Duration = seconds,
-    })
-
-    return success()
-end
-
-function TowerAPI.WaitForMoney(amount, timeout)
-    amount = tonumber(amount)
-
-    if not amount then
-        return makeError(
-            "Amount must be a number.",
-            "INVALID_AMOUNT"
-        )
-    end
-
-    timeout = timeout or Config.DefaultTimeout
-
-    local start = os.clock()
-
-    while os.clock() - start < timeout do
-        local money = TowerAPI.GetMoney()
-
-        if money and money >= amount then
-            return success({
-                Money = money,
-            })
-        end
-
-        task.wait(Config.ConditionInterval)
-    end
-
-    return makeError(
-        "Timed out waiting for money.",
-        "WAIT_MONEY_TIMEOUT"
-    )
-end
-
-function TowerAPI.WaitForTower(towerID, timeout)
-    timeout = timeout or Config.DefaultTimeout
-
-    local start = os.clock()
-
-    while os.clock() - start < timeout do
-        local tower = TowerAPI._ResolveTower(towerID)
-
-        if tower then
-            return success({
-                Tower = tower,
-            })
-        end
-
-        task.wait(Config.ConditionInterval)
-    end
-
-    return makeError(
-        "Timed out waiting for tower.",
-        "WAIT_TOWER_TIMEOUT"
-    )
-end
-
---==================================================
--- REPLAY
---==================================================
-
-local function executeAction(action)
-    if not action or not action.Type then
-        return makeError(
-            "Invalid replay action.",
-            "INVALID_REPLAY_ACTION"
-        )
-    end
-
-    if action.Type == "Place" then
-        local cf = deserializeCFrame(action.CFrame)
-
-        if not cf then
-            return makeError(
-                "Invalid Place CFrame.",
-                "INVALID_REPLAY_CFRAME"
-            )
-        end
-
-        return TowerAPI.Place(
-            action.TowerName,
-            cf
-        )
-
-    elseif action.Type == "Upgrade" then
-        local cf = deserializeCFrame(action.CFrame)
-
-        if not cf then
-            return makeError(
-                "Invalid Upgrade CFrame.",
-                "INVALID_REPLAY_CFRAME"
-            )
-        end
-
-        return TowerAPI.Upgrade(
-            action.Tower,
-            cf
-        )
-
-    elseif action.Type == "Sell" then
-        return TowerAPI.Sell(action.Tower)
-
-    elseif action.Type == "Ability" then
-        return TowerAPI.UseAbility(action.Tower)
-
-    elseif action.Type == "CycleTarget" then
-        return TowerAPI.CycleTarget(action.Tower)
-
-    elseif action.Type == "SetTarget" then
-        return TowerAPI.SetTarget(
-            action.Tower,
-            action.Target
-        )
-
-    elseif action.Type == "Skip" then
-        return TowerAPI.Skip()
-
-    elseif action.Type == "Restart" then
-        return TowerAPI.Restart()
-
-    elseif action.Type == "Vote" then
-        return TowerAPI.Vote(action.Mode)
-
-    elseif action.Type == "ElevatorSetup" then
-        return TowerAPI.FinishElevatorSetup(
-            action.Map,
-            action.PlayerAmount,
-            action.Modifiers
-        )
-
-    elseif action.Type == "Wait" then
-        return TowerAPI.Wait(action.Duration)
-
-    elseif action.Type == "WaitForMoney" then
-        return TowerAPI.WaitForMoney(
-            action.Amount,
-            action.Timeout
-        )
-    end
-
-    return makeError(
-        "Unknown replay action: " .. tostring(action.Type),
-        "UNKNOWN_REPLAY_ACTION"
-    )
-end
-
-function TowerAPI.StartReplay(replay, options)
-    if State.Replaying then
-        return makeError(
-            "Already replaying.",
-            "ALREADY_REPLAYING"
-        )
-    end
-
-    if type(replay) ~= "table" then
-        return makeError(
-            "Replay must be a table.",
-            "INVALID_REPLAY"
-        )
-    end
-
-    if type(replay.Actions) ~= "table" then
-        return makeError(
-            "Replay has no Actions table.",
-            "INVALID_REPLAY"
-        )
-    end
-
-    options = options or {}
-
-    State.Replaying = true
-    State.Paused = false
-    State.CurrentReplay = replay
-    State.ReplayToken += 1
-
-    local token = State.ReplayToken
-
-    Events.OnReplayStart:Fire(replay)
-
-    task.spawn(function()
-        local previousTime = 0
-
-        for index, action in ipairs(replay.Actions) do
-            if not State.Replaying or token ~= State.ReplayToken then
-                break
-            end
-
-            State.CurrentAction = index
-
-            while State.Paused and State.Replaying do
-                task.wait(0.05)
-            end
-
-            if not State.Replaying then
-                break
-            end
-
-            -- Timing is only used as a baseline.
-            -- Actions themselves are still executed sequentially.
-            if options.UseTiming ~= false and action.Time then
-                local delayTime = math.max(
-                    0,
-                    action.Time - previousTime
-                )
-
-                if delayTime > 0 then
-                    task.wait(delayTime)
-                end
-
-                previousTime = action.Time
-            end
-
-            local result = executeAction(action)
-
-            if type(result) == "table" and result.Success == false then
-                Events.OnError:Fire(result)
-                break
-            end
-        end
-
-        local finished = State.Replaying
-
-        State.Replaying = false
-        State.Paused = false
-
-        if finished then
-            Events.OnReplayFinished:Fire(replay)
-        end
-    end)
-
-    return success()
-end
-
-function TowerAPI.PauseReplay()
-    if not State.Replaying then
-        return makeError(
-            "Nothing is being replayed.",
-            "NOT_REPLAYING"
-        )
-    end
-
-    State.Paused = true
-
-    return success()
-end
-
-function TowerAPI.ResumeReplay()
-    if not State.Replaying then
-        return makeError(
-            "Nothing is being replayed.",
-            "NOT_REPLAYING"
-        )
-    end
-
-    State.Paused = false
-
-    return success()
-end
-
-function TowerAPI.StopReplay()
-    if not State.Replaying then
-        return makeError(
-            "Nothing is being replayed.",
-            "NOT_REPLAYING"
-        )
-    end
-
-    State.Replaying = false
-    State.Paused = false
-    State.ReplayToken += 1
-
-    Events.OnReplayStopped:Fire()
-
-    return success()
-end
-
---==================================================
--- JSON
---==================================================
-
-function TowerAPI.Serialize(replay)
-    local ok, result = pcall(function()
-        return HttpService:JSONEncode(replay)
-    end)
-
-    if not ok then
-        return makeError(
-            result,
-            "SERIALIZE_FAILED"
-        )
-    end
-
-    return result
-end
-
-function TowerAPI.Deserialize(json)
-    local ok, result = pcall(function()
-        return HttpService:JSONDecode(json)
-    end)
-
-    if not ok then
-        return makeError(
-            result,
-            "DESERIALIZE_FAILED"
-        )
-    end
-
-    return result
-end
-
-function TowerAPI.ExportReplay()
-    if not State.CurrentReplay then
-        return makeError(
-            "No replay exists.",
-            "NO_REPLAY"
-        )
-    end
-
-    return TowerAPI.Serialize(State.CurrentReplay)
-end
-
-function TowerAPI.ImportReplay(json)
-    local replay = TowerAPI.Deserialize(json)
-
-    if type(replay) ~= "table" then
-        return makeError(
-            "Invalid replay.",
-            "INVALID_REPLAY"
-        )
-    end
-
-    State.CurrentReplay = replay
-
-    return success(replay)
-end
-
---==================================================
--- TELEPORT QUEUE
---==================================================
-
-function TowerAPI.QueueReplay(replay, placeId)
-    State.TeleportQueue = {
-        Replay = deepCopy(replay),
-        PlaceId = placeId or game.PlaceId,
-        ActionIndex = State.CurrentAction,
-    }
-
-    return success(State.TeleportQueue)
-end
-
-function TowerAPI.GetTeleportQueue()
-    return deepCopy(State.TeleportQueue)
-end
-
-function TowerAPI.ClearTeleportQueue()
-    State.TeleportQueue = nil
-    return success()
-end
-
-function TowerAPI.GetTeleportData()
-    return TeleportService:GetLocalPlayerTeleportData()
-end
-
-function TowerAPI.ResumeTeleportReplay()
-    local data = TowerAPI.GetTeleportData()
-
-    if not data then
-        return makeError(
-            "No teleport replay data.",
-            "NO_TELEPORT_DATA"
-        )
-    end
-
-    if type(data) ~= "table" or not data.Replay then
-        return makeError(
-            "Teleport data does not contain a replay.",
-            "INVALID_TELEPORT_DATA"
-        )
-    end
-
-    return TowerAPI.StartReplay(
-        data.Replay,
-        data.Options
-    )
-end
-
---==================================================
--- TELEPORT
---==================================================
-
-function TowerAPI.Teleport(placeId, replay, options)
-    placeId = tonumber(placeId)
-
-    if not placeId then
-        return makeError(
-            "Invalid place ID.",
-            "INVALID_PLACE_ID"
-        )
-    end
-
-    local teleportData = {
-        Replay = replay,
-        Options = options or {},
-    }
-
-    -- Fire teleport notification via firesignal on
-    -- MessageRemote so the UI picks it up through
-    -- the existing OnMessage listener.
-    queue_on_teleport(placeId, teleportData)
-
-    -- This is intentionally kept behind a protected call.
-    local ok, result = pcall(function()
-        return TeleportService:Teleport(
-            placeId,
-            LocalPlayer,
-            teleportData
-        )
-    end)
-
-    if not ok then
-        return makeError(
-            result,
-            "TELEPORT_FAILED"
-        )
-    end
-
-    return success(result)
-end
-
---==================================================
--- STATUS
---==================================================
-
-function TowerAPI.GetStatus()
-    return {
-        Recording = State.Recording,
-        Replaying = State.Replaying,
-        Paused = State.Paused,
-
-        CurrentAction = State.CurrentAction,
-
-        TowerCount = #TowerAPI.GetTowers(),
-
-        NextTowerID = State.NextTowerID,
-
-        Money = TowerAPI.GetMoney(),
-
-        LastError = State.LastError,
-
-        TeleportQueue = State.TeleportQueue ~= nil,
-    }
-end
-
-function TowerAPI.GetLastError()
-    return State.LastError
-end
-
-function TowerAPI.ClearLastError()
-    State.LastError = nil
-    return success()
-end
-
-function TowerAPI.Configure(settings)
-    if type(settings) ~= "table" then
-        return makeError(
-            "Settings must be a table.",
-            "INVALID_CONFIG"
-        )
-    end
-
-    for key, value in pairs(settings) do
-        if Config[key] ~= nil then
-            Config[key] = value
-        end
-    end
-
-    return success(deepCopy(Config))
-end
-
-function TowerAPI.GetConfig()
-    return deepCopy(Config)
-end
-
---==================================================
--- MESSAGE LISTENER
---==================================================
-
-if MessageRemote and MessageRemote:IsA("RemoteEvent") then
-    MessageRemote.OnClientEvent:Connect(function(...)
-        local args = {...}
-
-        local message = {
-            Time = os.clock(),
-            Arguments = args,
-        }
-
-        table.insert(State.MessageHistory, message)
-
-        if #State.MessageHistory > 100 then
-            table.remove(State.MessageHistory, 1)
-        end
-
-        Events.OnMessage:Fire(message)
-    end)
-end
-
---==================================================
--- DIALOGUE LISTENER
---==================================================
-
-if DialogueRemote and DialogueRemote:IsA("RemoteEvent") then
-    DialogueRemote.OnClientEvent:Connect(function(...)
-        local args = {...}
-
-        local dialogue = {
-            Time = os.clock(),
-            Arguments = args,
-        }
-
-        table.insert(State.DialogueHistory, dialogue)
-
-        if #State.DialogueHistory > 100 then
-            table.remove(State.DialogueHistory, 1)
-        end
-
-        Events.OnDialogue:Fire(dialogue)
-    end)
-end
-
---==================================================
--- AUTOMATIC TOWER TRACKING
---==================================================
-
-local function setupTowerTracking()
-    local folder = getTowersFolder()
-
-    if not folder then
-        warn("[TowerAPI] workspace.Towers was not found.")
-        return
-    end
-
-    for _, tower in ipairs(folder:GetChildren()) do
-        if isTowerInstance(tower) then
-            local id = TowerAPI._GetTowerID(tower)
-
-            State.Towers[id] = {
-                Instance = tower,
-                ID = id,
-                Attributes = getTowerAttributes(tower),
-            }
-
-            if not State.TowerTargets[id] then
-                State.TowerTargets[id] = 1
-            end
-        end
-    end
-
-    folder.ChildAdded:Connect(function(tower)
-        if not isTowerInstance(tower) then
-            return
-        end
-
-        local id = TowerAPI._GetTowerID(tower)
-
-        State.Towers[id] = {
-            Instance = tower,
-            ID = id,
-            Attributes = getTowerAttributes(tower),
-        }
-
-        -- New tower always gets its own target state.
-        State.TowerTargets[id] = 1
-
-        Events.OnTowerAdded:Fire(id, tower)
-
-        debugPrint(
-            "Tower added:",
-            id,
-            tower.Name
-        )
-    end)
-
-    folder.ChildRemoved:Connect(function(tower)
-        for id, instance in pairs(State.TowerInstances) do
-            if instance == tower then
-                State.TowerInstances[id] = nil
-                State.Towers[id] = nil
-                State.TowerTargets[id] = nil
-
-                Events.OnTowerRemoved:Fire(id, tower)
-
-                debugPrint(
-                    "Tower removed:",
-                    id
-                )
-
-                break
-            end
-        end
-    end)
-end
-
-setupTowerTracking()
-
-TowerAPI.RefreshTowers()
-
-debugPrint("TowerAPI loaded.")
-
-return TowerAPI
+    -- ═══════════════════════════════════════════════════════════
+    --  RETURN
+    -- ═══════════════════════════════════════════════════════════
+    return API
+end)()

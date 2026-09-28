@@ -23,6 +23,8 @@ return (function()
     local PLACE_LOBBY  = 15549445942
     local PLACE_INGAME = 15549929783
 
+    local API_URL = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/testingapi"
+
     local ELEVATOR_MAP = {
         Normal   = "ElevatorMain",
         Dream    = "ElevatorDream",
@@ -702,20 +704,16 @@ B══════════════════════════�
     -- ═══════════════════════════════════════════════════════════
     API.Teleport = {}
 
-    --- Queue arbitrary Lua source to execute after teleport
-    function API.Teleport.QueueOnTeleport(scriptSource)
-        _queue_on_teleport(scriptSource)
-        return true
+    function API.Teleport.QueueScript(userScriptSource)
+        local full = 'local API = loadstring(game:HttpGet("' .. API_URL .. '"))()\n' .. userScriptSource
+        _queue_on_teleport(full)
     end
 
-    --- Queue the API itself to re-initialize after teleport
-    --- Pass your loadstring source so it re-runs automatically
     function API.Teleport.QueueAPI(apiLoadstringSource)
         _queue_on_teleport(apiLoadstringSource)
         return true
     end
 
-    --- Simple auto-rejoin: teleport back to current PlaceId after kick/end
     function API.Teleport.AutoRejoin()
         _queue_on_teleport([[
             local TS = game:GetService("TeleportService")
@@ -725,8 +723,6 @@ B══════════════════════════�
         ]])
     end
 
-    --- Full farm loop: lobby → game → lobby → game …
-    --- Provide the full script that should run after every teleport
     function API.Teleport.QueueFarmLoop(fullScriptSource)
         _queue_on_teleport(fullScriptSource)
     end

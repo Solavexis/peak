@@ -1,0 +1,441 @@
+--[[
+    Tower Defense UI (WindUI) - front-end for td_api.lua
+    Host BOTH files, put their raw URLs below, then run:
+
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/YOU/REPO/main/td_ui.lua"))()
+
+    This script loads the API itself, and re-queues ITSELF with queue_on_teleport,
+    so the UI + API + auto-run chain comes back after every teleport.
+]]
+
+local API_URL = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/testingapi"
+local UI_URL  = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/testingui"
+local WIND_URL = "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
+
+local env = (getgenv and getgenv()) or _G
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+---------------------------------------------------------------------
+-- Cleanup previous run
+---------------------------------------------------------------------
+if env.TD_UI then pcall(function() env.TD_UI:Destroy() end) end
+local token = {}
+env.TD_UI_TOKEN = token
+local function alive() return env.TD_UI_TOKEN == token end
+
+---------------------------------------------------------------------
+-- Load API + WindUI
+---------------------------------------------------------------------
+env.TD_LOADER_URL = nil -- the UI handles re-queueing itself (avoids double loads)
+local TD = loadstring(game:HttpGet(API_URL))()
+local WindUI = loadstring(game:HttpGet(WIND_URL))()
+
+local S = {
+    elevator = "Main", map = nil, mods = {}, players = 1,
+    tower = nil, towerId = nil, placeName = "Battler",
+    vote = "Easy", macroName = "run1", macro = nil, mode = "Timed", retries = 30,
+    autoSkip = false, autoUpgrade = false, queueUI = true,
+    autoJoin = true, autoPlay = true,
+}
+
+local function notify(title, content, icon)
+    pcall(function()
+        WindUI:Notify({ Title = title, Content = tostring(content), Duration = 3, Icon = icon or "info" })
+    end)
+end
+
+-- shows a toast for an API result
+local function handle(r, okMsg)
+    if r == nil then return end
+    if r.Success then
+        if okMsg then notify("Success", okMsg, "check") end
+    else
+        notify("Error", (r.Error or "unknown") .. " [" .. tostring(r.Code) .. "]", "x")
+    end
+    return r
+end
+
+local function orNone(list)
+    if #list == 0 then return { "(none)" } end
+    return list
+end
+
+local function cleanMods()
+    local out = {}
+    for _, m in ipairs(S.mods) do if m ~= "(none)" then table.insert(out, m) end end
+    return out
+end
+
+local function queueUI()
+    if S.queueUI then
+        local r = TD.QueueOnTeleport(string.format("loadstring(game:HttpGet(%q))()", UI_URL))
+        if not r.Success then notify("Queue failed", r.Error, "x") end
+    end
+end
+queueUI()
+
+---------------------------------------------------------------------
+-- Window
+---------------------------------------------------------------------
+local Window = WindUI:CreateWindow({
+    Title = "TD Macro Hub",
+    Icon = "swords",
+    Author = "TD API",
+    Folder = "TDMacros",
+    Size = UDim2.fromOffset(600, 470),
+    Theme = "Dark",
+    ToggleKey = Enum.KeyCode.RightShift,
+})
+env.TD_UI = Window
+
+local function setDesc(el, text) pcall(function() el:SetDesc(text) end) end
+local function refresh(dd, list) pcall(function() dd:Refresh(list) end) end
+
+---------------------------------------------------------------------
+-- STATUS TAB
+---------------------------------------------------------------------
+local Status = Window:Tab({ Title = "Status", Icon = "activity" })
+local statusPara = Status:Paragraph({ Title = "Live status", Desc = "loading..." })
+local dataPara = Status:Paragraph({ Title = "Player data", Desc = "Press 'Fetch data'." })
+
+Status:Button({
+    Title = "Fetch data",
+    Desc = "GetData() - level, bricks, bux, towers",
+    Callback = function()
+        local r = handle(TD.GetData())
+        if r and r.Success and type(r.Data) == "table" then
+            local d = r.Data
+            setDesc(dataPara, string.format(
+                "Level %s (XP %s)\nBricks: %s   Bux: %s\nOwned towers: %d   Equipped: %s",
+                tostring(d.Level), tostring(d.XP), tostring(d.Bricks), tostring(d.Bux),
+                #(d.OwnedTowers or {}), table.concat(d.TowersEquipped or {}, ", ")
+            ))
+        end
+    end,
+})
+
+task.spawn(function()
+    while alive() do
+        local place = TD.IsLobby() and "Lobby" or (TD.IsGame() and "In-game" or "Unknown place")
+        local cash = TD.GetCash()
+        setDesc(statusPara, string.format(
+            "Place: %s (%d)\nCash: %s\nRecording: %s   Playing: %s",
+            place, game.PlaceId, cash and ("$" .. cash) or "n/a",
+            tostring(TD.IsRecording()), tostring(TD.IsPlaying())
+        ))
+        task.wait(0.5)
+    end
+end)
+
+---------------------------------------------------------------------
+-- LOBBY TAB
+---------------------------------------------------------------------
+local Lobby = Window:Tab({ Title = "Lobby", Icon = "door-open" })
+
+Lobby:Section({ Title = "Towers" })
+local towerDD
+towerDD = Lobby:Dropdown({
+    Title = "Owned tower",
+    Values = { "(fetch first)" },
+    Value = "(fetch first)",
+    Callback = function(v) S.tower = v end,
+})
+Lobby:Button({
+    Title = "Refresh owned towers",
+    Callback = function()
+        local r = handle(TD.GetData())
+        if r and r.Success and r.Data.OwnedTowers then
+            refresh(towerDD, r.Data.OwnedTowers)
+            notify("Towers", #r.Data.OwnedTowers .. " owned", "check")
+        end
+    end,
+})
+local function needTower()
+    if not S.tower or S.tower == "(fetch first)" then notify("Pick a tower", "Refresh and select one.", "x") return false end
+    return true
+end
+Lobby:Button({ Title = "Equip", Callback = function() if needTower() then handle(TD.Equip(S.tower), "Equipped " .. S.tower) end end })
+Lobby:Button({ Title = "Unequip", Callback = function() if needTower() then handle(TD.Unequip(S.tower), "Unequipped " .. S.tower) end end })
+Lobby:Button({
+    Title = "Raw interact (toggle)",
+    Callback = function()
+        if needTower() then
+            local r = handle(TD.Interact(S.tower))
+            if r and r.Success then notify("Result", r.Data) end
+        end
+    end,
+})
+
+Lobby:Section({ Title = "Elevator" })
+Lobby:Dropdown({
+    Title = "Elevator type",
+    Values = TD.GetElevatorTypes(),
+    Value = "Main",
+    Callback = function(v) S.elevator = v end,
+})
+local mapDD = Lobby:Dropdown({
+    Title = "Map",
+    Values = orNone(TD.GetMaps()),
+    Value = (TD.GetMaps()[1]) or "(none)",
+    Callback = function(v) S.map = v end,
+})
+S.map = TD.GetMaps()[1]
+local modDD = Lobby:Dropdown({
+    Title = "Modifiers",
+    Values = orNone(TD.GetMods()),
+    Value = {},
+    Multi = true,
+    AllowNone = true,
+    Callback = function(v) S.mods = (type(v) == "table") and v or { v } end,
+})
+Lobby:Slider({
+    Title = "Players",
+    Step = 1,
+    Value = { Min = 1, Max = 4, Default = 1 },
+    Callback = function(v) S.players = v end,
+})
+Lobby:Button({
+    Title = "Refresh maps / mods",
+    Callback = function()
+        refresh(mapDD, orNone(TD.GetMaps()))
+        refresh(modDD, orNone(TD.GetMods()))
+    end,
+})
+Lobby:Button({
+    Title = "Join elevator + setup",
+    Desc = "firetouchinterest on the entrance, then FinishSetup",
+    Callback = function()
+        if not S.map or S.map == "(none)" then notify("Pick a map", "Select a map first.", "x") return end
+        handle(TD.JoinElevator(S.elevator, { Map = S.map, Mods = cleanMods(), Players = S.players }), "Joined " .. S.elevator)
+    end,
+})
+Lobby:Button({
+    Title = "Only send FinishSetup",
+    Callback = function()
+        if not S.map or S.map == "(none)" then notify("Pick a map", "Select a map first.", "x") return end
+        handle(TD.FinishSetup(S.map, cleanMods(), S.players), "Setup sent")
+    end,
+})
+
+Lobby:Section({ Title = "Fake client message (firesignal)" })
+local msgText = "You need 299 more bricks to buy this tower."
+Lobby:Input({ Title = "Message", Value = msgText, Callback = function(v) msgText = v end })
+Lobby:Button({ Title = "Show message", Callback = function() handle(TD.Notify(msgText)) end })
+
+---------------------------------------------------------------------
+-- GAME TAB
+---------------------------------------------------------------------
+local Game = Window:Tab({ Title = "Game", Icon = "gamepad-2" })
+
+Game:Section({ Title = "Match control" })
+Game:Dropdown({
+    Title = "Difficulty",
+    Values = { "Easy", "Normal", "Hard" },
+    Value = "Easy",
+    Callback = function(v) S.vote = v end,
+})
+Game:Button({ Title = "Vote", Callback = function() handle(TD.Vote(S.vote), "Voted " .. S.vote) end })
+Game:Button({ Title = "Skip wave", Callback = function() handle(TD.Skip(), "Skipped") end })
+Game:Button({ Title = "Pause / unpause", Callback = function() handle(TD.Pause()) end })
+Game:Button({ Title = "Restart", Callback = function() handle(TD.Restart(), "Restart sent") end })
+Game:Toggle({ Title = "Auto skip", Value = false, Callback = function(v) S.autoSkip = v end })
+Game:Toggle({ Title = "Auto upgrade all my towers", Value = false, Callback = function(v) S.autoUpgrade = v end })
+
+Game:Section({ Title = "Place tower" })
+Game:Input({ Title = "Tower name", Value = "Battler", Callback = function(v) S.placeName = v end })
+Game:Button({
+    Title = "Place at my feet",
+    Desc = "Raycasts down from your character",
+    Callback = function()
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then notify("Error", "No character", "x") return end
+        local params = RaycastParams.new()
+        params.FilterDescendantsInstances = { char }
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        local hit = workspace:Raycast(hrp.Position, Vector3.new(0, -30, 0), params)
+        local pos = hit and hit.Position or hrp.Position
+        local r = handle(TD.PlaceTower(S.placeName, CFrame.new(pos)))
+        if r and r.Success then notify("Placed", "Tower #" .. r.Data.Name, "check") end
+    end,
+})
+
+Game:Section({ Title = "My towers" })
+local ownedTowerDD
+ownedTowerDD = Game:Dropdown({
+    Title = "Tower id",
+    Values = { "(refresh)" },
+    Value = "(refresh)",
+    Callback = function(v) S.towerId = v end,
+})
+local towerInfo = Game:Paragraph({ Title = "Tower info", Desc = "Select a tower and press 'Inspect'." })
+Game:Button({
+    Title = "Refresh my towers",
+    Callback = function()
+        local list = {}
+        for _, t in ipairs(TD.GetTowers(true)) do
+            table.insert(list, t.Id)
+        end
+        refresh(ownedTowerDD, orNone(list))
+        notify("Towers", #list .. " found", "check")
+    end,
+})
+local function needId()
+    if not S.towerId or S.towerId == "(refresh)" or S.towerId == "(none)" then
+        notify("Pick a tower", "Refresh and select an id.", "x") return false
+    end
+    return true
+end
+Game:Button({
+    Title = "Inspect",
+    Callback = function()
+        if not needId() then return end
+        local r = handle(TD.GetTowerAttributes(S.towerId))
+        if r and r.Success then
+            local a = r.Data
+            setDesc(towerInfo, string.format(
+                "Name: %s\nLevel: %s\nOwner: %s\nSell price: %s\nNext upgrade: %s",
+                tostring(a.Name), tostring(a.Level), tostring(a.Owner), tostring(a.SellPrice), tostring(a.UpgradeName)
+            ))
+        end
+    end,
+})
+Game:Button({ Title = "Upgrade", Callback = function() if needId() then handle(TD.UpgradeTower(S.towerId), "Upgraded") end end })
+Game:Button({ Title = "Use ability", Callback = function() if needId() then handle(TD.UseAbility(S.towerId), "Ability used") end end })
+
+Game:Section({ Title = "Fake game message" })
+Game:Button({ Title = "Show 'You need: $241 More.'", Callback = function() handle(TD.Notify("You need: $241 More.", Color3.new(1, 0, 0))) end })
+
+task.spawn(function()
+    while alive() do
+        if TD.IsGame() then
+            if S.autoSkip then TD.Skip() end
+            if S.autoUpgrade then
+                for _, t in ipairs(TD.GetTowers(true)) do
+                    if not alive() or not S.autoUpgrade then break end
+                    TD.UpgradeTower(t.Instance)
+                end
+            end
+        end
+        task.wait(1)
+    end
+end)
+
+---------------------------------------------------------------------
+-- MACRO TAB
+---------------------------------------------------------------------
+local Macro = Window:Tab({ Title = "Macros", Icon = "circle-dot" })
+
+Macro:Section({ Title = "Record" })
+Macro:Input({ Title = "Macro name", Value = "run1", Callback = function(v) S.macroName = v end })
+local macroDD
+local function refreshMacros()
+    if macroDD then refresh(macroDD, orNone(TD.ListMacros())) end
+end
+Macro:Button({
+    Title = "Start recording",
+    Desc = "Now vote/place/upgrade like normal - everything is captured",
+    Callback = function()
+        local name = (S.macroName ~= "" and S.macroName) or ("macro_" .. os.time())
+        handle(TD.StartRecording(name), "Recording '" .. name .. "'")
+    end,
+})
+Macro:Button({
+    Title = "Stop & save",
+    Callback = function()
+        local r = handle(TD.StopRecording(true))
+        if r and r.Success then
+            notify("Saved", #r.Data.entries .. " steps", "check")
+            refreshMacros()
+        end
+    end,
+})
+Macro:Button({
+    Title = "Stop (discard)",
+    Callback = function() handle(TD.StopRecording(false), "Discarded") end,
+})
+
+Macro:Section({ Title = "Replay" })
+macroDD = Macro:Dropdown({
+    Title = "Saved macros",
+    Values = orNone(TD.ListMacros()),
+    Value = TD.ListMacros()[1] or "(none)",
+    Callback = function(v) S.macro = v end,
+})
+S.macro = TD.ListMacros()[1]
+Macro:Button({ Title = "Refresh list", Callback = refreshMacros })
+Macro:Dropdown({
+    Title = "Playback mode",
+    Values = { "Timed", "Fast" },
+    Value = "Timed",
+    Callback = function(v) S.mode = v end,
+})
+Macro:Slider({
+    Title = "Retries per step",
+    Step = 1,
+    Value = { Min = 1, Max = 100, Default = 30 },
+    Callback = function(v) S.retries = v end,
+})
+local function needMacro()
+    if not S.macro or S.macro == "(none)" then notify("Pick a macro", "Nothing selected.", "x") return false end
+    return true
+end
+Macro:Button({
+    Title = "Play",
+    Callback = function()
+        if not needMacro() then return end
+        handle(TD.Play(S.macro, {
+            Mode = S.mode,
+            Retries = S.retries,
+            OnDone = function(completed) notify("Macro", completed and "Finished" or "Stopped", completed and "check" or "square") end,
+        }), "Playing '" .. S.macro .. "'")
+    end,
+})
+Macro:Button({ Title = "Stop playback", Callback = function() TD.Stop() notify("Macro", "Stopping...", "square") end })
+Macro:Button({
+    Title = "Delete selected",
+    Callback = function()
+        if needMacro() and handle(TD.DeleteMacro(S.macro), "Deleted") then
+            S.macro = nil
+            refreshMacros()
+        end
+    end,
+})
+
+---------------------------------------------------------------------
+-- AUTO-RUN TAB
+---------------------------------------------------------------------
+local Auto = Window:Tab({ Title = "Auto-run", Icon = "repeat" })
+Auto:Paragraph({
+    Title = "How it works",
+    Desc = "Uses the Elevator/Map/Mods/Players you chose in the Lobby tab and the macro chosen in Macros.\n"
+        .. "After every teleport the UI is re-queued, joins the elevator in the lobby, and plays the macro in-game.",
+})
+Auto:Toggle({ Title = "Auto join elevator (lobby)", Value = true, Callback = function(v) S.autoJoin = v end })
+Auto:Toggle({ Title = "Auto play macro (in-game)", Value = true, Callback = function(v) S.autoPlay = v end })
+Auto:Toggle({
+    Title = "Re-queue UI on teleport",
+    Value = true,
+    Callback = function(v) S.queueUI = v if v then queueUI() end end,
+})
+Auto:Button({
+    Title = "Save auto-run config",
+    Callback = function()
+        local cfg = {}
+        if S.autoJoin then
+            if not S.map or S.map == "(none)" then notify("Pick a map", "Choose a map in the Lobby tab.", "x") return end
+            cfg.AutoJoin = { Elevator = S.elevator, Map = S.map, Mods = cleanMods(), Players = S.players }
+        end
+        if S.autoPlay then
+            if not S.macro or S.macro == "(none)" then notify("Pick a macro", "Choose a macro in the Macros tab.", "x") return end
+            cfg.AutoPlay = { Macro = S.macro, Mode = S.mode }
+        end
+        handle(TD.SetAutoRun(cfg), "Auto-run saved")
+    end,
+})
+Auto:Button({ Title = "Clear auto-run", Callback = function() handle(TD.ClearAutoRun(), "Auto-run cleared") end })
+
+---------------------------------------------------------------------
+Window:SelectTab(1)
+notify("TD Macro Hub", "Loaded. Toggle UI with RightShift.", "check")

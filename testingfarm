@@ -72,6 +72,12 @@ local function isWinVisible()
     return ok and result == true
 end
 
+local function isLoseVisible()
+    local ok, result = pcall(function()
+        return LocalPlayer.PlayerGui.GameGUI.EndScreen.Lose.Visible
+    end)
+    return ok and result == true
+end
 ---------------------------------------------------------------------
 -- One round: vote, wait for the map to load, replay the macro
 ---------------------------------------------------------------------
@@ -104,7 +110,7 @@ task.spawn(function()
     local wasVisible = false
     while alive() do
         if TD.IsGame() then
-            local visible = isWinVisible()
+            local visible = isWinVisible() or isLoseVisible()
             if visible and not wasVisible then
                 TD.Stop() -- in case the macro is still mid-replay
                 task.wait(2) -- let the win screen settle

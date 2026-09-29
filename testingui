@@ -37,6 +37,8 @@ local S = {
     vote = "Easy", macroName = "run1", macro = nil, mode = "Timed", retries = 30,
     autoSkip = false, autoUpgrade = false, queueUI = true,
     autoJoin = true, autoPlay = true,
+    afk = true, jumpscare = true,
+    checkMoney = true, requireLoadout = true, voteBeforePlay = false, after = "None",
 }
 
 local function notify(title, content, icon)
@@ -113,6 +115,20 @@ Status:Button({
             ))
         end
     end,
+})
+
+Status:Section({ Title = "Protection" })
+Status:Toggle({
+    Title = "Anti-AFK",
+    Desc = "Fires VirtualUser input when idled",
+    Value = true,
+    Callback = function(v) S.afk = v handle(TD.SetAntiAFK(v)) end,
+})
+Status:Toggle({
+    Title = "Anti-jumpscare",
+    Desc = "Deletes ReplicatedStorage.FX.Jumpscare clones the moment they appear",
+    Value = true,
+    Callback = function(v) S.jumpscare = v handle(TD.SetAntiJumpscare(v)) end,
 })
 
 task.spawn(function()
@@ -215,6 +231,42 @@ Lobby:Button({
     Callback = function()
         if not S.map or S.map == "(none)" then notify("Pick a map", "Select a map first.", "x") return end
         handle(TD.FinishSetup(S.map, cleanMods(), S.players), "Setup sent")
+    end,
+})
+
+Lobby:Section({ Title = "Loadout for selected macro" })
+local loadoutInfo = Lobby:Paragraph({ Title = "Loadout status", Desc = "Pick a macro in the Macros tab, then check." })
+local function loadSelectedMacro()
+    if not S.macro or S.macro == "(none)" then notify("Pick a macro", "Choose one in the Macros tab.", "x") return nil end
+    local r = TD.LoadMacro(S.macro)
+    if not handle(r) then return nil end
+    return r.Data
+end
+Lobby:Button({
+    Title = "Check loadout",
+    Callback = function()
+        local macro = loadSelectedMacro()
+        if not macro then return end
+        local r = handle(TD.CheckLoadout(macro))
+        if r and r.Success then
+            local d = r.Data
+            setDesc(loadoutInfo, d.Ok
+                and "Loadout matches this macro."
+                or ("Missing/unequipped: " .. table.concat(d.Missing, ", ") .. "\nEquipped but unused: " .. table.concat(d.ExtraEquipped, ", ")))
+        end
+    end,
+})
+Lobby:Button({
+    Title = "Fix loadout now",
+    Desc = "Equips what the macro needs, unequips what it doesn't use",
+    Callback = function()
+        local macro = loadSelectedMacro()
+        if not macro then return end
+        local r = handle(TD.FixLoadout(macro))
+        if r and r.Success then
+            notify("Fixed", ("Equipped %d, unequipped %d"):format(#r.Data.Equipped, #r.Data.Unequipped), "check")
+            if #r.Data.CannotEquip > 0 then notify("Can't equip", table.concat(r.Data.CannotEquip, ", "), "x") end
+        end
     end,
 })
 
@@ -377,6 +429,30 @@ Macro:Slider({
     Value = { Min = 1, Max = 100, Default = 30 },
     Callback = function(v) S.retries = v end,
 })
+Macro:Toggle({
+    Title = "Require correct loadout",
+    Desc = "Cancels the macro and goes to the lobby to fix towers if the loadout doesn't match",
+    Value = true,
+    Callback = function(v) S.requireLoadout = v end,
+})
+Macro:Toggle({
+    Title = "Check money before spending",
+    Desc = "Waits for enough cash before each placement/upgrade instead of firing blind",
+    Value = true,
+    Callback = function(v) S.checkMoney = v end,
+})
+Macro:Toggle({
+    Title = "Vote difficulty before playing",
+    Desc = "Uses the difficulty selected in the Game tab",
+    Value = false,
+    Callback = function(v) S.voteBeforePlay = v end,
+})
+Macro:Dropdown({
+    Title = "After finishing",
+    Values = { "None", "Repeat", "Lobby", "Shutdown" },
+    Value = "None",
+    Callback = function(v) S.after = v end,
+})
 local function needMacro()
     if not S.macro or S.macro == "(none)" then notify("Pick a macro", "Nothing selected.", "x") return false end
     return true
@@ -388,6 +464,10 @@ Macro:Button({
         handle(TD.Play(S.macro, {
             Mode = S.mode,
             Retries = S.retries,
+            RequireLoadout = S.requireLoadout,
+            CheckMoney = S.checkMoney,
+            Vote = S.voteBeforePlay and S.vote or nil,
+            After = S.after ~= "None" and S.after or nil,
             OnDone = function(completed) notify("Macro", completed and "Finished" or "Stopped", completed and "check" or "square") end,
         }), "Playing '" .. S.macro .. "'")
     end,
@@ -410,7 +490,8 @@ local Auto = Window:Tab({ Title = "Auto-run", Icon = "repeat" })
 Auto:Paragraph({
     Title = "How it works",
     Desc = "Uses the Elevator/Map/Mods/Players you chose in the Lobby tab and the macro chosen in Macros.\n"
-        .. "After every teleport the UI is re-queued, joins the elevator in the lobby, and plays the macro in-game.",
+        .. "After every teleport the UI is re-queued, joins the elevator in the lobby, and plays the macro in-game.\n"
+        .. "If the macro's towers aren't equipped, playback cancels itself, teleports to the lobby, fixes the loadout automatically, then resumes.",
 })
 Auto:Toggle({ Title = "Auto join elevator (lobby)", Value = true, Callback = function(v) S.autoJoin = v end })
 Auto:Toggle({ Title = "Auto play macro (in-game)", Value = true, Callback = function(v) S.autoPlay = v end })
@@ -429,7 +510,11 @@ Auto:Button({
         end
         if S.autoPlay then
             if not S.macro or S.macro == "(none)" then notify("Pick a macro", "Choose a macro in the Macros tab.", "x") return end
-            cfg.AutoPlay = { Macro = S.macro, Mode = S.mode }
+            cfg.AutoPlay = {
+                Macro = S.macro, Mode = S.mode,
+                Vote = S.voteBeforePlay and S.vote or nil,
+                After = S.after ~= "None" and S.after or nil,
+            }
         end
         handle(TD.SetAutoRun(cfg), "Auto-run saved")
     end,

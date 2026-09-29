@@ -3,7 +3,7 @@
     ---------------------------------------------------
     Host this file (GitHub raw, etc.) and load it with:
 
-        getgenv().TD_LOADER_URL = "https://raw.githubusercontent.com/Solavexis/peak/main/testingapi"
+        getgenv().TD_LOADER_URL = "https://raw.githubusercontent.com/YOU/REPO/main/td_api.lua"
         local TD = loadstring(game:HttpGet(getgenv().TD_LOADER_URL))()
 
     Setting TD_LOADER_URL is what lets the API re-queue itself with queue_on_teleport.
@@ -38,6 +38,8 @@ end
 local Players           = game:GetService("Players")
 local RS                = game:GetService("ReplicatedStorage")
 local HttpService       = game:GetService("HttpService")
+local TeleportService   = game:GetService("TeleportService")
+local VirtualUser       = game:GetService("VirtualUser")
 local LocalPlayer       = Players.LocalPlayer
 
 local qot = queue_on_teleport
@@ -53,6 +55,9 @@ local M = {}
 M.Places = { Lobby = 15549445942, Game = 15549929783 }
 M.Folder = "TDMacros"
 M.LoaderUrl = env.TD_LOADER_URL
+
+-- forward declarations (defined in the "Persistent state" section further down)
+local loadState, saveState
 
 ---------------------------------------------------------------------
 -- Result helpers
@@ -144,21 +149,115 @@ function M.WaitForCash(amount, timeout)
 end
 
 ---------------------------------------------------------------------
--- Data / lobby
+-- Anti-AFK
 ---------------------------------------------------------------------
-function M.GetData()
-    return call("GetData", "InvokeServer")
+local afkConn
+function M.SetAntiAFK(enabled)
+    if afkConn then afkConn:Disconnect() afkConn = nil end
+    if enabled then
+        afkConn = LocalPlayer.Idled:Connect(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new())
+        end)
+    end
+    return success(enabled)
 end
+function M.IsAntiAFKEnabled() return afkConn ~= nil end
+
+---------------------------------------------------------------------
+-- Anti-jumpscare
+-- Jumpscare mods clone ReplicatedStorage.FX.Jumpscare into the PlayerGui;
+-- this watches for it and deletes it the moment it appears.
+---------------------------------------------------------------------
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local jumpscareConn
+
+local function jumpscareName()
+    local fx = RS:FindFirstChild("FX")
+    local template = fx and fx:FindFirstChild("Jumpscare")
+    return template and template.Name or "Jumpscare"
+end
+
+local function killJumpscare(child)
+    if child.Name ~= jumpscareName() then return end
+    child:Destroy()
+    M.Notify("Game tried to jumpscare but failed: Script successfully deleted the Jumpscare UI", Color3.new(0, 1, 0))
+end
+
+function M.SetAntiJumpscare(enabled)
+    if jumpscareConn then jumpscareConn:Disconnect() jumpscareConn = nil end
+    if enabled then
+        -- catch anything already present, then anything added from here on
+        for _, child in ipairs(PlayerGui:GetChildren()) do killJumpscare(child) end
+        jumpscareConn = PlayerGui.ChildAdded:Connect(killJumpscare)
+    end
+    return success(enabled)
+end
+function M.IsAntiJumpscareEnabled() return jumpscareConn ~= nil end
+
+---------------------------------------------------------------------
+-- Data / ownership
+---------------------------------------------------------------------
+local function contains(list, v)
+    for _, x in ipairs(list or {}) do if x == v then return true end end
+    return false
+end
+
+-- Owned/equipped towers are cached in memory AND on disk, so the in-game place
+-- (where the GetData remote may not exist) can still verify ownership.
+local OWNED_FILE = M.Folder .. "/_owned.json"
+local ownedCache -- { Owned = {...}, Equipped = {...} }
+
+local function cacheOwned(data)
+    if type(data) ~= "table" or type(data.OwnedTowers) ~= "table" then return end
+    ownedCache = { Owned = data.OwnedTowers, Equipped = data.TowersEquipped or {} }
+    if writefile then
+        pcall(function()
+            if isfolder and not isfolder(M.Folder) then makefolder(M.Folder) end
+            writefile(OWNED_FILE, HttpService:JSONEncode(ownedCache))
+        end)
+    end
+end
+
+function M.GetData()
+    local r = call("GetData", "InvokeServer")
+    if r.Success then cacheOwned(r.Data) end
+    return r
+end
+
+-- success({Owned = {...}, Equipped = {...}}); forceRefresh re-reads from the server if possible
+function M.GetOwnedTowers(forceRefresh)
+    if ownedCache and not forceRefresh then return success(ownedCache) end
+
+    local remotes = RS:FindFirstChild("Remotes")
+    if remotes and remotes:FindFirstChild("GetData") then
+        M.GetData() -- updates ownedCache on success
+        if ownedCache then return success(ownedCache) end
+    end
+
+    if isfile and readfile and isfile(OWNED_FILE) then
+        local ok, d = pcall(function() return HttpService:JSONDecode(readfile(OWNED_FILE)) end)
+        if ok and type(d) == "table" and type(d.Owned) == "table" then
+            ownedCache = d
+            return success(d)
+        end
+    end
+    return makeError("Couldn't verify owned towers. Open the lobby once (or run GetData) first.", "OWNERSHIP_UNKNOWN")
+end
+
+function M.IsOwned(towerName)
+    local r = M.GetOwnedTowers()
+    return r.Success and contains(r.Data.Owned, towerName) or false
+end
+
+---------------------------------------------------------------------
+-- Lobby
+---------------------------------------------------------------------
 
 function M.Interact(towerName)
     local r = call("InteractItem", "InvokeServer", towerName)
     if r.Success then r.Data = r.Raw[1] end -- "Equipped" / "Unequipped" / ...
     return r
-end
-
-local function contains(list, v)
-    for _, x in ipairs(list or {}) do if x == v then return true end end
-    return false
 end
 
 function M.SetEquipped(towerName, wanted)
@@ -440,6 +539,68 @@ function M.DeleteMacro(name)
 end
 
 ---------------------------------------------------------------------
+-- Loadout checking (does the macro's loadout match what's equipped?)
+---------------------------------------------------------------------
+function M.GoToLobby()
+    local ok, err = pcall(function()
+        TeleportService:Teleport(M.Places.Lobby, LocalPlayer)
+    end)
+    if not ok then return makeError(tostring(err), "TELEPORT_FAILED") end
+    return success(true)
+end
+
+-- success({Needed = {name=true}, Missing = {...}, ExtraEquipped = {...}, Ok = bool})
+-- Missing = towers the macro places that are either not owned or not currently equipped.
+-- ExtraEquipped = towers you have equipped that the macro never places.
+function M.CheckLoadout(macro)
+    if type(macro) ~= "table" or type(macro.entries) ~= "table" then
+        return makeError("Invalid macro.", "MACRO_CORRUPT")
+    end
+    local needed = {}
+    for _, e in ipairs(macro.entries) do
+        if e.type == "place" and e.tower then needed[e.tower] = true end
+    end
+
+    local r = M.GetOwnedTowers()
+    if not r.Success then return r end
+    local owned, equipped = r.Data.Owned, r.Data.Equipped
+
+    local missing, extra = {}, {}
+    for name in pairs(needed) do
+        if not contains(owned, name) or not contains(equipped, name) then table.insert(missing, name) end
+    end
+    for _, name in ipairs(equipped) do
+        if not needed[name] then table.insert(extra, name) end
+    end
+
+    return success({ Needed = needed, Missing = missing, ExtraEquipped = extra, Ok = (#missing == 0) })
+end
+
+-- lobby only: equips whatever the macro needs (that you own) and unequips whatever it doesn't use
+function M.FixLoadout(macro)
+    local e = requireLobby(); if e then return e end
+    local check = M.CheckLoadout(macro)
+    if not check.Success then return check end
+
+    local owned = M.GetOwnedTowers().Data.Owned
+    local results = { Equipped = {}, Unequipped = {}, CannotEquip = {} }
+
+    for _, name in ipairs(check.Data.Missing) do
+        if contains(owned, name) then
+            local r = M.Equip(name)
+            table.insert(r.Success and results.Equipped or results.CannotEquip, name)
+        else
+            table.insert(results.CannotEquip, name) -- don't own it, can't fix this one
+        end
+    end
+    for _, name in ipairs(check.Data.ExtraEquipped) do
+        if M.Unequip(name).Success then table.insert(results.Unequipped, name) end
+    end
+
+    return success(results)
+end
+
+---------------------------------------------------------------------
 -- Recorder (hooks __namecall, ignores the API's own calls)
 ---------------------------------------------------------------------
 local Recorder = { active = false, entries = {}, t0 = 0, name = nil, pending = 0, remotes = {} }
@@ -471,7 +632,7 @@ local function installHook()
                 if typeof(first) == "string" then
                     -- new placement: id is resolved after the server responds
                     local before = towerSet()
-                    local entry = push({ type = "place", tower = first, cf = packCF(args[2]) })
+                    local entry = push({ type = "place", tower = first, cf = packCF(args[2]), cash = M.GetCash() })
                     Recorder.pending += 1
                     task.spawn(function()
                         local t = waitNewTower(before, 2)
@@ -479,7 +640,7 @@ local function installHook()
                         Recorder.pending -= 1
                     end)
                 elseif typeof(first) == "Instance" and args[3] == true then
-                    push({ type = "upgrade", id = first.Name, cf = packCF(args[2]) })
+                    push({ type = "upgrade", id = first.Name, cf = packCF(args[2]), cash = M.GetCash() })
                 end
             elseif self == R.Ability and method == "InvokeServer" then
                 local first, extra = args[1], args[2]
@@ -547,51 +708,64 @@ local Player = { token = nil }
 function M.IsPlaying() return Player.token ~= nil and not Player.token.stop end
 function M.Stop() if Player.token then Player.token.stop = true end end
 
+-- returns ok, reason
 local function runStep(e, idMap, token, opts)
-    local retries    = opts.Retries or 30
-    local retryDelay = opts.RetryDelay or 0.5
+    local retries     = opts.Retries or 30
+    local retryDelay  = opts.RetryDelay or 0.5
+    local checkMoney  = opts.CheckMoney ~= false
+    local moneyWait   = opts.MoneyTimeout or 15
 
     if e.type == "vote" then
-        return M.Vote(e.difficulty).Success
+        return M.Vote(e.difficulty).Success, "vote"
     elseif e.type == "skip" then
-        return M.Skip().Success
+        return M.Skip().Success, "skip"
 
     elseif e.type == "place" then
+        if checkMoney and e.cash and not M.WaitForCash(e.cash, moneyWait) then
+            return false, "insufficient funds"
+        end
         for _ = 1, retries do
-            if token.stop then return false end
+            if token.stop then return false, "stopped" end
             local r = M.PlaceTower(e.tower, unpackCF(e.cf))
             if r.Success then idMap[e.id] = r.Data return true end
             task.wait(retryDelay)
         end
-        return false
+        return false, "placement failed"
 
     elseif e.type == "upgrade" then
         local tower = idMap[e.id] or M._ResolveTower(e.id)
-        if not tower then return false end
+        if not tower then return false, "tower missing" end
+        if checkMoney and e.cash and not M.WaitForCash(e.cash, moneyWait) then
+            return false, "insufficient funds"
+        end
         for _ = 1, retries do
-            if token.stop or not tower.Parent then return false end
+            if token.stop or not tower.Parent then return false, "stopped" end
             if M.UpgradeTower(tower).Success then return true end
             task.wait(retryDelay)
         end
-        return false
+        return false, "upgrade failed"
 
     elseif e.type == "ability" then
         local tower = idMap[e.id] or M._ResolveTower(e.id)
-        if not tower then return false end
-        return M.UseAbility(tower, e.arg).Success
+        if not tower then return false, "tower missing" end
+        return M.UseAbility(tower, e.arg).Success, "ability"
     end
-    return false
+    return false, "unknown step"
 end
 
--- opts: Mode="Timed"|"Fast", Retries, RetryDelay, OnStep(i, entry, ok), OnDone(completed)
+-- opts: Mode="Timed"|"Fast", Retries, RetryDelay, CheckMoney, MoneyTimeout, MaxWait,
+--       RequireLoadout (default true), Vote="Easy"|"Normal"|"Hard" (voted before the first step),
+--       After="Repeat"|"Shutdown"|"Lobby" (what to do once the macro finishes),
+--       OnStep(i, entry, ok, reason), OnDone(completed)
 function M.Play(nameOrMacro, opts)
     local e = requireGame(); if e then return e end
     opts = opts or {}
     if M.IsPlaying() then return makeError("A macro is already playing.", "ALREADY_PLAYING") end
 
+    local macroName = type(nameOrMacro) == "string" and nameOrMacro or nil
     local macro = nameOrMacro
-    if type(nameOrMacro) == "string" then
-        local r = M.LoadMacro(nameOrMacro)
+    if macroName then
+        local r = M.LoadMacro(macroName)
         if not r.Success then return r end
         macro = r.Data
     end
@@ -599,9 +773,29 @@ function M.Play(nameOrMacro, opts)
         return makeError("Invalid macro.", "MACRO_CORRUPT")
     end
 
+    -- loadout check: cancel + fix in lobby instead of running with the wrong towers equipped
+    if opts.RequireLoadout ~= false then
+        local check = M.CheckLoadout(macro)
+        if check.Success and not check.Data.Ok then
+            if macroName then
+                local st = loadState()
+                st.PendingFix = { Macro = macroName }
+                saveState(st)
+            end
+            M.GoToLobby()
+            return makeError(
+                "Loadout mismatch (missing: " .. table.concat(check.Data.Missing, ", ") .. "). Teleporting to lobby to fix it.",
+                "LOADOUT_MISMATCH"
+            )
+        end
+    end
+
+    if opts.Vote then M.Vote(opts.Vote) task.wait(0.5) end
+
     local token = { stop = false }
     Player.token = token
-    local timed = (opts.Mode or "Timed") == "Timed"
+    local timed   = (opts.Mode or "Timed") == "Timed"
+    local maxWait = opts.MaxWait or 10 -- timing check: never stall on one step for longer than this
 
     task.spawn(function()
         local idMap, start, completed = {}, os.clock(), true
@@ -609,13 +803,24 @@ function M.Play(nameOrMacro, opts)
             if token.stop then completed = false break end
             if timed then
                 local wait = entry.t - (os.clock() - start)
-                if wait > 0 then task.wait(wait) end
+                if wait > 0 then task.wait(math.min(wait, maxWait)) end
             end
-            local ok = runStep(entry, idMap, token, opts)
-            if opts.OnStep then pcall(opts.OnStep, i, entry, ok) end
+            local ok, reason = runStep(entry, idMap, token, opts)
+            if opts.OnStep then pcall(opts.OnStep, i, entry, ok, reason) end
         end
         if Player.token == token then Player.token = nil end
         if opts.OnDone then pcall(opts.OnDone, completed) end
+
+        if completed and opts.After then
+            if opts.After == "Repeat" then
+                task.wait(opts.RepeatDelay or 1)
+                if M.IsGame() then M.Play(macro, opts) end
+            elseif opts.After == "Shutdown" then
+                pcall(function() game:Shutdown() end)
+            elseif opts.After == "Lobby" then
+                M.GoToLobby()
+            end
+        end
     end)
     return success(#macro.entries)
 end
@@ -625,20 +830,20 @@ end
 ---------------------------------------------------------------------
 local STATE_FILE = M.Folder .. "/_state.json"
 
-local function loadState()
+function loadState()
     if isfile and readfile and isfile(STATE_FILE) then
         local ok, d = pcall(function() return HttpService:JSONDecode(readfile(STATE_FILE)) end)
         if ok and type(d) == "table" then return d end
     end
     return {}
 end
-local function saveState(st)
+function saveState(st)
     if not writefile then return end
     ensureFolder()
     pcall(writefile, STATE_FILE, HttpService:JSONEncode(st))
 end
 
--- cfg = { AutoJoin = {Elevator, Map, Mods, Players, SetupDelay}, AutoPlay = {Macro, Mode} }
+-- cfg = { AutoJoin = {Elevator, Map, Mods, Players, SetupDelay}, AutoPlay = {Macro, Mode, Vote, After} }
 function M.SetAutoRun(cfg)
     local st = loadState()
     st.AutoJoin = cfg.AutoJoin
@@ -676,6 +881,8 @@ end
 function M.Destroy()
     Recorder.active = false
     M.Stop()
+    M.SetAntiAFK(false)
+    M.SetAntiJumpscare(false)
     -- the namecall hook stays installed (harmless when inactive); it just passes through
     if env.TDAPI == M then env.TDAPI = nil end
 end
@@ -684,19 +891,45 @@ local function autoRun()
     if not game:IsLoaded() then game.Loaded:Wait() end
     local st = loadState()
 
-    if M.IsLobby() and st.AutoJoin then
-        getHRP()
-        task.wait(2)
-        local j = st.AutoJoin
-        M.JoinElevator(j.Elevator or "Main", {
-            Map = j.Map, Mods = j.Mods, Players = j.Players, SetupDelay = j.SetupDelay,
-        })
+    if M.IsLobby() then
+        if st.PendingFix and st.PendingFix.Macro then
+            getHRP()
+            local mr = M.LoadMacro(st.PendingFix.Macro)
+            if mr.Success then
+                local fix = M.FixLoadout(mr.Data)
+                if fix.Success then
+                    local msg = ("#" .. #fix.Data.Equipped .. " equipped, " .. #fix.Data.Unequipped .. " unequipped")
+                    if #fix.Data.CannotEquip > 0 then
+                        msg = msg .. " - missing (not owned): " .. table.concat(fix.Data.CannotEquip, ", ")
+                    end
+                    M.Notify("Loadout fixed for '" .. st.PendingFix.Macro .. "': " .. msg, Color3.new(0, 1, 0))
+                end
+            end
+            st.PendingFix = nil
+            saveState(st)
+        end
+        if st.AutoJoin then
+            getHRP()
+            task.wait(2)
+            local j = st.AutoJoin
+            M.JoinElevator(j.Elevator or "Main", {
+                Map = j.Map, Mods = j.Mods, Players = j.Players, SetupDelay = j.SetupDelay,
+            })
+        end
     elseif M.IsGame() and st.AutoPlay and st.AutoPlay.Macro then
         workspace:WaitForChild("Towers", 30)
         task.wait(1)
-        M.Play(st.AutoPlay.Macro, { Mode = st.AutoPlay.Mode or "Timed" })
+        M.Play(st.AutoPlay.Macro, {
+            Mode = st.AutoPlay.Mode or "Timed",
+            Vote = st.AutoPlay.Vote,
+            After = st.AutoPlay.After,
+        })
     end
 end
+
+-- on by default; both are safe no-ops if the executor lacks the needed globals
+M.SetAntiAFK(true)
+M.SetAntiJumpscare(true)
 
 -- keep the chain alive across teleports
 if M.LoaderUrl and qot then M.QueueSelf() end

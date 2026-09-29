@@ -1,5 +1,5 @@
 --[[
-    TD Auto-Farm (no UI) - vote Easy, replay run1.json, restart on win, repeat forever.
+    TD Auto-Farm (no UI) - vote Easy, replay run1.json, restart on win/lose, repeat forever.
 
     Host td_api.lua and this file, put both URLs below, then run:
         loadstring(game:HttpGet("https://raw.githubusercontent.com/YOU/REPO/main/td_farm.lua"))()
@@ -63,7 +63,7 @@ local function waitUntilFullyLoaded()
 end
 
 ---------------------------------------------------------------------
--- Win-screen watcher
+-- Win/Lose screen watchers
 ---------------------------------------------------------------------
 local function isWinVisible()
     local ok, result = pcall(function()
@@ -78,8 +78,12 @@ local function isLoseVisible()
     end)
     return ok and result == true
 end
+
 ---------------------------------------------------------------------
--- One round: vote, wait for the map to load, replay the macro
+-- One round: vote, wait for the map to load, replay the macro,
+-- and actually WAIT for the replay to finish (Play() is async - it
+-- fires and returns immediately, so we poll IsPlaying()/OnDone instead
+-- of trusting the return value alone).
 ---------------------------------------------------------------------
 local farming = false
 
@@ -91,17 +95,29 @@ local function startRound()
     TD.Vote(VOTE)
     task.wait(1)
 
-    local r = TD.Play(MACRO, { Mode = "Timed" })
+    local playDone = false
+    local r = TD.Play(MACRO, {
+        Mode = "Timed",
+        OnDone = function() playDone = true end,
+    })
+
     if not r.Success then
         warn("[TD Farm] Play failed: " .. tostring(r.Error) .. " [" .. tostring(r.Code) .. "]")
         TD.Notify("Auto-farm: " .. tostring(r.Error), Color3.new(1, 0, 0))
+        farming = false
+        return
+    end
+
+    -- block here until the replay genuinely finishes (or we stop being "alive")
+    while alive() and not playDone and TD.IsPlaying() do
+        task.wait(0.5)
     end
 
     farming = false
 end
 
 ---------------------------------------------------------------------
--- Main loop: watch for the win screen, restart, play again
+-- Main loop: watch for the win/lose screen, restart, play again
 ---------------------------------------------------------------------
 task.spawn(function()
     waitUntilFullyLoaded()
@@ -113,11 +129,11 @@ task.spawn(function()
             local visible = isWinVisible() or isLoseVisible()
             if visible and not wasVisible then
                 TD.Stop() -- in case the macro is still mid-replay
-                task.wait(2) -- let the win screen settle
+                task.wait(2) -- let the win/lose screen settle
                 TD.Restart()
                 task.wait(2)
                 waitUntilFullyLoaded()
-                startRound()
+                task.spawn(startRound) -- don't block this poll loop while a round runs
             end
             wasVisible = visible
         else
@@ -127,4 +143,4 @@ task.spawn(function()
     end
 end)
 
-print("[TD Farm] Running: vote " .. VOTE .. ", macro '" .. MACRO .. "', auto-restart on win.")
+print("[TD Farm] Running: vote " .. VOTE .. ", macro '" .. MACRO .. "', auto-restart on win/lose.")

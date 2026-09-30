@@ -1,0 +1,146 @@
+--[[
+    TD Auto-Farm (no UI) - vote Easy, replay run1.json, restart on win/lose, repeat forever.
+
+    Host td_api.lua and this file, put both URLs below, then run:
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/YOU/REPO/main/td_farm.lua"))()
+
+    Requires TDMacros/run1.json to already exist (writefile it yourself, or use
+    the install script I gave you earlier).
+]]
+
+local API_URL  = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/testingapi"
+local FARM_URL = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/doomfarm"
+local MACRO    = "test"
+local VOTE     = "Easy"
+
+local env = (getgenv and getgenv()) or _G
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+---------------------------------------------------------------------
+-- Wait for the game to be fully loaded before touching anything else
+---------------------------------------------------------------------
+if not game:IsLoaded() then game.Loaded:Wait() end
+
+---------------------------------------------------------------------
+-- Cleanup previous run
+---------------------------------------------------------------------
+local token = {}
+env.TD_FARM_TOKEN = token
+local function alive() return env.TD_FARM_TOKEN == token end
+
+---------------------------------------------------------------------
+-- Load API (this also enables anti-AFK / anti-jumpscare by default,
+-- and re-queues itself via queue_on_teleport)
+---------------------------------------------------------------------
+env.TD_LOADER_URL = API_URL
+local TD = loadstring(game:HttpGet(API_URL))()
+TD.SetAntiAFK(true) -- explicit, in case a previous session turned it off
+
+-- keep this farm script itself alive across every teleport
+TD.QueueOnTeleport(string.format("loadstring(game:HttpGet(%q))()", FARM_URL))
+
+---------------------------------------------------------------------
+-- Wait until everything the API needs actually exists: character,
+-- remotes, the towers folder, and the round GUI.
+---------------------------------------------------------------------
+local function waitUntilFullyLoaded()
+    if not TD.IsGame() then return end
+
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    char:WaitForChild("HumanoidRootPart", 15)
+    local hum = char:WaitForChild("Humanoid", 15)
+    if hum then
+        while alive() and hum.Health <= 0 do task.wait(0.2) end
+    end
+
+    local RS = game:GetService("ReplicatedStorage")
+    RS:WaitForChild("Events", 30)
+    workspace:WaitForChild("Towers", 30)
+    LocalPlayer:WaitForChild("PlayerGui"):WaitForChild("GameGUI", 30)
+
+    task.wait(1) -- small settle buffer after everything streams in
+end
+
+---------------------------------------------------------------------
+-- Win/Lose screen watchers
+---------------------------------------------------------------------
+local function isWinVisible()
+    local ok, result = pcall(function()
+        return LocalPlayer.PlayerGui.GameGUI.EndScreen.Win.Visible
+    end)
+    return ok and result == true
+end
+
+local function isLoseVisible()
+    local ok, result = pcall(function()
+        return LocalPlayer.PlayerGui.GameGUI.EndScreen.Lose.Visible
+    end)
+    return ok and result == true
+end
+
+---------------------------------------------------------------------
+-- One round: vote, wait for the map to load, replay the macro,
+-- and actually WAIT for the replay to finish (Play() is async - it
+-- fires and returns immediately, so we poll IsPlaying()/OnDone instead
+-- of trusting the return value alone).
+---------------------------------------------------------------------
+local farming = false
+
+local function startRound()
+    if farming or not alive() or not TD.IsGame() then return end
+    farming = true
+
+    waitUntilFullyLoaded()
+    TD.Vote(VOTE)
+    task.wait(1)
+
+    local playDone = false
+    local r = TD.Play(MACRO, {
+        Mode = "Timed",
+        OnDone = function() playDone = true end,
+    })
+
+    if not r.Success then
+        warn("[TD Farm] Play failed: " .. tostring(r.Error) .. " [" .. tostring(r.Code) .. "]")
+        TD.Notify("Auto-farm: " .. tostring(r.Error), Color3.new(1, 0, 0))
+        farming = false
+        return
+    end
+
+    -- block here until the replay genuinely finishes (or we stop being "alive")
+    while alive() and not playDone and TD.IsPlaying() do
+        task.wait(0.5)
+    end
+
+    farming = false
+end
+
+---------------------------------------------------------------------
+-- Main loop: watch for the win/lose screen, restart, play again
+---------------------------------------------------------------------
+task.spawn(function()
+    waitUntilFullyLoaded()
+    if TD.IsGame() then startRound() end
+
+    local wasVisible = false
+    while alive() do
+        if TD.IsGame() then
+            local visible = isWinVisible() or isLoseVisible()
+            if visible and not wasVisible then
+                TD.Stop() -- in case the macro is still mid-replay
+                task.wait(2) -- let the win/lose screen settle
+                TD.Restart()
+                task.wait(2)
+                waitUntilFullyLoaded()
+                task.spawn(startRound) -- don't block this poll loop while a round runs
+            end
+            wasVisible = visible
+        else
+            wasVisible = false
+        end
+        task.wait(0.5)
+    end
+end)
+
+print("[TD Farm] Running: vote " .. VOTE .. ", macro '" .. MACRO .. "', auto-restart on win/lose.")

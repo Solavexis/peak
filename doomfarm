@@ -10,7 +10,7 @@
 
 local API_URL  = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/testingapi"
 local FARM_URL = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/doomfarm"
-local MACRO    = "test"
+local MACRO    = "testtest"
 local VOTE     = "Easy"
 
 local env = (getgenv and getgenv()) or _G

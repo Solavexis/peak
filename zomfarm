@@ -186,6 +186,104 @@ local function startRound()
 end
 
 ---------------------------------------------------------------------
+-- Shared restart state
+---------------------------------------------------------------------
+
+local restarting = false
+
+local function doRestart(label)
+    if restarting or not alive() then
+        return
+    end
+
+    restarting = true
+
+    print("[TD Farm] Restart triggered by: " .. label)
+
+    -----------------------------------------------------------------
+    -- Stop macro
+    -----------------------------------------------------------------
+
+    TD.Stop()
+
+    task.wait(2)
+
+    -----------------------------------------------------------------
+    -- Restart
+    --
+    -- The restarted game/script will handle startRound()
+    -- again, so we don't manually call it here.
+    -----------------------------------------------------------------
+
+    if alive() then
+        TD.Restart()
+    end
+end
+
+---------------------------------------------------------------------
+-- Function 1: Watch Win / Lose screen visibility
+---------------------------------------------------------------------
+
+local function watchEndScreen()
+    local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+    local GameGUI   = PlayerGui:WaitForChild("GameGUI")
+    local EndScreen = GameGUI:WaitForChild("EndScreen")
+
+    local Win  = EndScreen:WaitForChild("Win")
+    local Lose = EndScreen:WaitForChild("Lose")
+
+    local function checkEndScreen()
+        if restarting or not alive() then
+            return
+        end
+
+        if not Win.Visible and not Lose.Visible then
+            return
+        end
+
+        if Win.Visible then
+            print("[TD Farm] Win screen detected.")
+            doRestart("WinScreen")
+        elseif Lose.Visible then
+            print("[TD Farm] Lose screen detected.")
+            doRestart("LoseScreen")
+        end
+    end
+
+    Win:GetPropertyChangedSignal("Visible"):Connect(checkEndScreen)
+    Lose:GetPropertyChangedSignal("Visible"):Connect(checkEndScreen)
+
+    -- Check once in case it was already visible
+    checkEndScreen()
+end
+
+---------------------------------------------------------------------
+-- Function 2: Listen for Award event → restart
+---------------------------------------------------------------------
+
+local function watchAwardEvent()
+    local AwardEvent = ReplicatedStorage
+        :WaitForChild("Events")
+        :WaitForChild("Game")
+        :WaitForChild("Award")
+
+    AwardEvent.OnClientEvent:Connect(function(awardId, awardName)
+        if restarting or not alive() then
+            return
+        end
+
+        print(
+            "[TD Farm] Award event fired — id="
+            .. tostring(awardId)
+            .. ", name="
+            .. tostring(awardName)
+        )
+
+        doRestart("AwardEvent")
+    end)
+end
+
+---------------------------------------------------------------------
 -- Main startup
 ---------------------------------------------------------------------
 
@@ -199,74 +297,11 @@ task.spawn(function()
     startRound()
 
     -----------------------------------------------------------------
-    -- Get EndScreen
+    -- Launch both watchers concurrently
     -----------------------------------------------------------------
 
-    local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-    local GameGUI = PlayerGui:WaitForChild("GameGUI")
-    local EndScreen = GameGUI:WaitForChild("EndScreen")
-
-    local Win = EndScreen:WaitForChild("Win")
-    local Lose = EndScreen:WaitForChild("Lose")
-
-    local restarting = false
-
-    -----------------------------------------------------------------
-    -- End screen detection
-    --
-    -- This uses Visible property events instead of polling.
-    -----------------------------------------------------------------
-
-    local function checkEndScreen()
-        if restarting or not alive() then
-            return
-        end
-
-        if not Win.Visible and not Lose.Visible then
-            return
-        end
-
-        restarting = true
-
-        if Win.Visible then
-            print("[TD Farm] Win screen detected.")
-        elseif Lose.Visible then
-            print("[TD Farm] Lose screen detected.")
-        end
-
-        -----------------------------------------------------------------
-        -- Stop macro
-        -----------------------------------------------------------------
-
-        TD.Stop()
-
-        task.wait(2)
-
-        -----------------------------------------------------------------
-        -- Restart
-        --
-        -- The restarted game/script will handle startRound()
-        -- again, so we don't manually call it here.
-        -----------------------------------------------------------------
-
-        if alive() then
-            TD.Restart()
-        end
-    end
-
-    -----------------------------------------------------------------
-    -- Listen for Visible changes
-    -----------------------------------------------------------------
-
-    Win:GetPropertyChangedSignal("Visible"):Connect(checkEndScreen)
-
-    Lose:GetPropertyChangedSignal("Visible"):Connect(checkEndScreen)
-
-    -----------------------------------------------------------------
-    -- Check once in case it was already visible
-    -----------------------------------------------------------------
-
-    checkEndScreen()
+    task.spawn(watchEndScreen)
+    task.spawn(watchAwardEvent)
 end)
 
 ---------------------------------------------------------------------
@@ -279,5 +314,5 @@ print(
     .. tostring(VOTE)
     .. ", macro='"
     .. tostring(MACRO)
-    .. "', event-based win/lose detection enabled."
+    .. "', event-based win/lose + award detection enabled."
 )

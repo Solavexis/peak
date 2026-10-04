@@ -3,7 +3,7 @@ local env = (getgenv and getgenv()) or _G
 local API_URL = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/testingapi"
 local FARM_URL = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/bestfarm"
 
-local MACRO = "wasssuppp"
+local MACRO = "wassup2"
 local VOTE = "Normal"
 
 local Players = game:GetService("Players")

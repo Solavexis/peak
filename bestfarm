@@ -1,47 +1,72 @@
 local env = (getgenv and getgenv()) or _G
 
-local API_URL  = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/testingapi"
+local API_URL = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/testingapi"
 local FARM_URL = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/bestfarm"
-local MACRO    = "wasssuppp"
-local VOTE     = "Normal" -- "Easy", "Hard", etc. OR "Start" to fire StartGame
+
+local MACRO = "wasssuppp"
+local VOTE = "Normal"
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
 local LocalPlayer = Players.LocalPlayer
-
----------------------------------------------------------------------
--- Wait for game to load
----------------------------------------------------------------------
 
 if not game:IsLoaded() then
     game.Loaded:Wait()
 end
 
----------------------------------------------------------------------
--- Cleanup previous run
----------------------------------------------------------------------
+if env.TD_FARM_CLEANUP then
+    pcall(env.TD_FARM_CLEANUP)
+end
+
+local aliveState = true
+local connections = {}
+
+local function connect(signal, callback)
+    local connection = signal:Connect(callback)
+    table.insert(connections, connection)
+    return connection
+end
+
+local function cleanup()
+    if not aliveState then
+        return
+    end
+
+    aliveState = false
+
+    for i = #connections, 1, -1 do
+        local connection = connections[i]
+
+        if connection then
+            pcall(function()
+                connection:Disconnect()
+            end)
+        end
+
+        connections[i] = nil
+    end
+end
+
+env.TD_FARM_CLEANUP = cleanup
 
 local token = {}
 env.TD_FARM_TOKEN = token
 
 local function alive()
-    return env.TD_FARM_TOKEN == token
+    return aliveState and env.TD_FARM_TOKEN == token
 end
-
----------------------------------------------------------------------
--- Load API
----------------------------------------------------------------------
 
 env.TD_LOADER_URL = API_URL
 
 local TD = loadstring(game:HttpGet(API_URL))()
 
-TD.SetAntiAFK(true)
+if not alive() then
+    return
+end
 
----------------------------------------------------------------------
--- Re-queue farm script after teleport
----------------------------------------------------------------------
+TD.SetAntiAFK(true)
 
 TD.QueueOnTeleport(
     string.format(
@@ -50,48 +75,76 @@ TD.QueueOnTeleport(
     )
 )
 
----------------------------------------------------------------------
--- Wait until everything is loaded
----------------------------------------------------------------------
-
 local function waitUntilFullyLoaded()
-    if not TD.IsGame() then
-        return
+    if not alive() or not TD.IsGame() then
+        return false
     end
 
     local char = LocalPlayer.Character
         or LocalPlayer.CharacterAdded:Wait()
 
-    char:WaitForChild("HumanoidRootPart", 15)
+    if not alive() then
+        return false
+    end
+
+    if not char:WaitForChild("HumanoidRootPart", 15) then
+        return false
+    end
 
     local hum = char:WaitForChild("Humanoid", 15)
 
-    if hum then
-        while alive() and hum.Health <= 0 do
-            task.wait(0.2)
-        end
+    if not hum then
+        return false
+    end
+
+    while alive() and hum.Health <= 0 do
+        task.wait(0.2)
+    end
+
+    if not alive() then
+        return false
     end
 
     local Events = ReplicatedStorage:WaitForChild("Events", 30)
 
-    Events
-        :WaitForChild("Game", 30)
-        :WaitForChild("StartGame", 30)
+    if not Events then
+        return false
+    end
 
-    workspace:WaitForChild("Towers", 30)
+    local GameEvents = Events:WaitForChild("Game", 30)
 
-    LocalPlayer
-        :WaitForChild("PlayerGui")
-        :WaitForChild("GameGUI", 30)
+    if not GameEvents then
+        return false
+    end
+
+    if not GameEvents:WaitForChild("StartGame", 30) then
+        return false
+    end
+
+    if not workspace:WaitForChild("Towers", 30) then
+        return false
+    end
+
+    local PlayerGui = LocalPlayer:WaitForChild("PlayerGui", 30)
+
+    if not PlayerGui then
+        return false
+    end
+
+    if not PlayerGui:WaitForChild("GameGUI", 30) then
+        return false
+    end
 
     task.wait(1)
+
+    return alive()
 end
 
----------------------------------------------------------------------
--- Start game / vote
----------------------------------------------------------------------
-
 local function startGameMode()
+    if not alive() then
+        return
+    end
+
     if VOTE == "Start" then
         local StartGame = ReplicatedStorage
             :WaitForChild("Events")
@@ -108,41 +161,38 @@ local function startGameMode()
     end
 end
 
----------------------------------------------------------------------
--- One round
----------------------------------------------------------------------
-
 local farming = false
+local restarting = false
 
 local function startRound()
-    if farming or not alive() or not TD.IsGame() then
+    if farming or restarting or not alive() or not TD.IsGame() then
         return
     end
 
     farming = true
 
-    waitUntilFullyLoaded()
+    if not waitUntilFullyLoaded() then
+        farming = false
+        return
+    end
 
     if not alive() or not TD.IsGame() then
         farming = false
         return
     end
 
-    -----------------------------------------------------------------
-    -- Start game / vote
-    -----------------------------------------------------------------
-
     startGameMode()
 
     task.wait(1)
 
-    -----------------------------------------------------------------
-    -- Play macro
-    -----------------------------------------------------------------
+    if not alive() then
+        farming = false
+        return
+    end
 
     local playDone = false
 
-    local r = TD.Play(MACRO, {
+    local result = TD.Play(MACRO, {
         Mode = "Timed",
 
         OnDone = function()
@@ -150,27 +200,23 @@ local function startRound()
         end,
     })
 
-    if not r.Success then
+    if not result.Success then
         warn(
             "[TD Farm] Play failed: "
-            .. tostring(r.Error)
+            .. tostring(result.Error)
             .. " ["
-            .. tostring(r.Code)
+            .. tostring(result.Code)
             .. "]"
         )
 
         TD.Notify(
-            "Auto-farm: " .. tostring(r.Error),
+            "Auto-farm: " .. tostring(result.Error),
             Color3.new(1, 0, 0)
         )
 
         farming = false
         return
     end
-
-    -----------------------------------------------------------------
-    -- Wait for macro to finish
-    -----------------------------------------------------------------
 
     while alive()
         and not playDone
@@ -182,134 +228,183 @@ local function startRound()
     farming = false
 end
 
----------------------------------------------------------------------
--- Shared restart state
----------------------------------------------------------------------
-
-local restarting = false
-
-local function doRestart(label)
+local function doRestart(reason)
     if restarting or not alive() then
         return
     end
 
     restarting = true
 
-    print("[TD Farm] Restart triggered by: " .. label)
+    print("[TD Farm] Restart triggered by: " .. tostring(reason))
 
-    -----------------------------------------------------------------
-    -- Stop macro
-    -----------------------------------------------------------------
-
-    TD.Stop()
+    pcall(function()
+        TD.Stop()
+    end)
 
     task.wait(2)
 
-    -----------------------------------------------------------------
-    -- Restart
-    --
-    -- The restarted game/script will handle startRound()
-    -- again, so we don't manually call it here.
-    -----------------------------------------------------------------
-
     if alive() then
-        TD.Restart()
+        pcall(function()
+            TD.Restart()
+        end)
     end
 end
 
----------------------------------------------------------------------
--- Function 1: Watch Win / Lose screen visibility
----------------------------------------------------------------------
+local Win
+local Lose
 
-local function watchEndScreen()
-    local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-    local GameGUI   = PlayerGui:WaitForChild("GameGUI")
-    local EndScreen = GameGUI:WaitForChild("EndScreen")
+local function refreshEndScreen()
+    Win = nil
+    Lose = nil
 
-    local Win  = EndScreen:WaitForChild("Win")
-    local Lose = EndScreen:WaitForChild("Lose")
+    local PlayerGui = LocalPlayer:FindFirstChild("PlayerGui")
 
-    local function checkEndScreen()
-        if restarting or not alive() then
-            return
-        end
+    if not PlayerGui then
+        return
+    end
 
-        if not Win.Visible and not Lose.Visible then
-            return
-        end
+    local GameGUI = PlayerGui:FindFirstChild("GameGUI")
 
-        if Win.Visible then
-            print("[TD Farm] Win screen detected.")
+    if not GameGUI then
+        return
+    end
+
+    local EndScreen = GameGUI:FindFirstChild("EndScreen")
+
+    if not EndScreen then
+        return
+    end
+
+    Win = EndScreen:FindFirstChild("Win")
+    Lose = EndScreen:FindFirstChild("Lose")
+end
+
+local lastWinVisible = false
+local lastLoseVisible = false
+
+local function checkWinLoss()
+    if not alive() or restarting then
+        return
+    end
+
+    if not Win or not Win.Parent
+        or not Lose or not Lose.Parent
+    then
+        refreshEndScreen()
+    end
+
+    if not Win or not Lose then
+        return
+    end
+
+    local winVisible = Win.Visible
+    local loseVisible = Lose.Visible
+
+    if winVisible and not lastWinVisible then
+        lastWinVisible = winVisible
+        lastLoseVisible = loseVisible
+
+        print("[TD Farm] Win detected.")
+
+        task.spawn(function()
             doRestart("WinScreen")
-        elseif Lose.Visible then
-            print("[TD Farm] Lose screen detected.")
-            doRestart("LoseScreen")
-        end
+        end)
+
+        return
     end
 
-    Win:GetPropertyChangedSignal("Visible"):Connect(checkEndScreen)
-    Lose:GetPropertyChangedSignal("Visible"):Connect(checkEndScreen)
+    if loseVisible and not lastLoseVisible then
+        lastWinVisible = winVisible
+        lastLoseVisible = loseVisible
 
-    -- Check once in case it was already visible
-    checkEndScreen()
+        print("[TD Farm] Lose detected.")
+
+        task.spawn(function()
+            doRestart("LoseScreen")
+        end)
+
+        return
+    end
+
+    lastWinVisible = winVisible
+    lastLoseVisible = loseVisible
 end
 
----------------------------------------------------------------------
--- Function 2: Listen for Award event → restart
----------------------------------------------------------------------
+connect(RunService.PreRender, checkWinLoss)
 
-local function watchAwardEvent()
-    local AwardEvent = ReplicatedStorage
-        :WaitForChild("Events")
-        :WaitForChild("Game")
-        :WaitForChild("Award")
+local function setupAwardWatcher()
+    local Events = ReplicatedStorage:WaitForChild("Events", 30)
 
-    AwardEvent.OnClientEvent:Connect(function(awardId, awardName)
-        if restarting or not alive() then
-            return
+    if not Events then
+        return
+    end
+
+    local GameEvents = Events:WaitForChild("Game", 30)
+
+    if not GameEvents then
+        return
+    end
+
+    local AwardEvent = GameEvents:WaitForChild("Award", 30)
+
+    if not AwardEvent then
+        return
+    end
+
+    connect(
+        AwardEvent.OnClientEvent,
+        function(awardId, awardName)
+            if restarting or not alive() then
+                return
+            end
+
+            print(
+                "[TD Farm] Award event fired — id="
+                .. tostring(awardId)
+                .. ", name="
+                .. tostring(awardName)
+            )
+
+            task.spawn(function()
+                doRestart("AwardEvent")
+            end)
         end
-
-        print(
-            "[TD Farm] Award event fired — id="
-            .. tostring(awardId)
-            .. ", name="
-            .. tostring(awardName)
-        )
-
-        doRestart("AwardEvent")
-    end)
+    )
 end
 
----------------------------------------------------------------------
--- Main startup
----------------------------------------------------------------------
+connect(
+    Players.PlayerRemoving,
+    function(player)
+        if player == LocalPlayer then
+            cleanup()
+        end
+    end
+)
 
 task.spawn(function()
-    waitUntilFullyLoaded()
+    if not waitUntilFullyLoaded() then
+        return
+    end
 
     if not alive() or not TD.IsGame() then
         return
     end
 
+    refreshEndScreen()
+    setupAwardWatcher()
     startRound()
-
-    -----------------------------------------------------------------
-    -- Launch both watchers concurrently
-    -----------------------------------------------------------------
-
-    task.spawn(watchEndScreen)
-    task.spawn(watchAwardEvent)
 end)
 
----------------------------------------------------------------------
--- Status
----------------------------------------------------------------------
-
 print(
-    "[TD Farm] Running: "
-    .. "mode="
+    "[TD Farm] Running: mode="
     .. tostring(VOTE)
     .. ", macro='"
     .. tostring(MACRO)
-    .. "', event-based win/lose + award detection enabled."
+    .. "', PreRender win/lose + Award detection."
 )
+
+loadstring(
+    game:HttpGet(
+        "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/farmchecker"
+    )
+)()

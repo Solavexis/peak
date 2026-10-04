@@ -274,29 +274,14 @@ local function parseTime(value)
     end
 
     local text = tostring(value)
-    text = text:gsub("%s+", "")
 
-    -- HH:MM:SS
-    local h, m, s = text:match("^(%d+):(%d+):(%d+)$")
+    local minutes, seconds = text:match("(%d+):(%d+)")
 
-    if h then
-        return tonumber(h) * 3600
-            + tonumber(m) * 60
-            + tonumber(s)
+    if minutes and seconds then
+        return tonumber(minutes) * 60 + tonumber(seconds)
     end
 
-    -- MM:SS
-    m, s = text:match("^(%d+):(%d+)$")
-
-    if m then
-        return tonumber(m) * 60
-            + tonumber(s)
-    end
-
-    -- Seconds
-    local seconds = tonumber(text:match("%d+%.?%d*"))
-
-    return seconds or 0
+    return tonumber(text:match("%d+")) or 0
 end
 
 ---------------------------------------------------------------------
@@ -322,27 +307,13 @@ local function formatNumber(number)
     return formatted
 end
 
-local function formatTime(seconds)
-    seconds = math.floor(seconds)
+local function formatTime(totalSeconds)
+    totalSeconds = math.floor(totalSeconds)
 
-    local hours = math.floor(seconds / 3600)
-    local minutes = math.floor((seconds % 3600) / 60)
-    local secs = seconds % 60
+    local minutes = math.floor(totalSeconds / 60)
+    local seconds = totalSeconds % 60
 
-    if hours > 0 then
-        return string.format(
-            "%02d:%02d:%02d",
-            hours,
-            minutes,
-            secs
-        )
-    end
-
-    return string.format(
-        "%02d:%02d",
-        minutes,
-        secs
-    )
+    return string.format("%02d:%02d", minutes, seconds)
 end
 
 ---------------------------------------------------------------------

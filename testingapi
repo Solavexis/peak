@@ -869,7 +869,38 @@ end
 ---------------------------------------------------------------------
 -- Replayer
 ---------------------------------------------------------------------
-local Player = { token = nil }
+local Player = { token = nil, info = nil }
+
+local function setStatus(text)
+    if Player.info then Player.info.status = text end
+end
+
+-- live view of the replay for debugger UIs. Macro is the SAME table the replayer
+-- iterates, so editing Macro.entries in place changes steps that haven't run yet.
+function M.GetPlayback()
+    local info = Player.info
+    if not info then return { Playing = false } end
+    return {
+        Playing = M.IsPlaying(),
+        Name = info.name,
+        Macro = info.macro,
+        Index = info.index,          -- step currently waiting/running (next to execute)
+        Total = #info.macro.entries,
+        Status = info.status,
+        Paused = info.paused,
+        Elapsed = os.clock() - info.start,
+        Timed = info.timed,
+        Results = info.results,      -- [entry table] = { ok = bool, reason = string }
+    }
+end
+function M.PausePlayback(paused)
+    if Player.info then Player.info.paused = paused and true or false end
+    return success(paused and true or false)
+end
+function M.SkipStep()
+    if Player.token then Player.token.skip = true end
+    return success(true)
+end
 
 function M.IsPlaying() return Player.token ~= nil and not Player.token.stop end
 function M.Stop() if Player.token then Player.token.stop = true end end
@@ -998,6 +1029,17 @@ function M.SetAutoRepair(enabled, options)
 end
 function M.IsAutoRepairEnabled() return Track.repair end
 
+local function waitCash(amount, timeout, token)
+    setStatus("waiting for $" .. tostring(amount))
+    local start = os.clock()
+    while (M.GetCash() or 0) < amount do
+        if token.stop or token.skip then return false end
+        if os.clock() - start > timeout then return false end
+        task.wait(0.1)
+    end
+    return true
+end
+
 local function runStep(e, idMap, token, opts)
     local retries     = opts.Retries or 30
     local retryDelay  = opts.RetryDelay or 0.5
@@ -1010,11 +1052,12 @@ local function runStep(e, idMap, token, opts)
         return M.Skip().Success, "skip"
 
     elseif e.type == "place" then
-        if checkMoney and e.cash and not M.WaitForCash(e.cash, moneyWait) then
+        if checkMoney and e.cash and not waitCash(e.cash, moneyWait, token) then
             return false, "insufficient funds"
         end
         for _ = 1, retries do
             if token.stop then return false, "stopped" end
+            if token.skip then return false, "skipped" end
             local r = M.PlaceTower(e.tower, unpackCF(e.cf))
             if r.Success then
                 idMap[e.id] = r.Data
@@ -1037,7 +1080,8 @@ local function runStep(e, idMap, token, opts)
         -- destroyed by enemies and being re-placed: wait for the repair instead of skipping
         if not tower and Track.repair and info and not info.sold then
             local start = os.clock()
-            while not tower and not info.sold and not token.stop
+            setStatus("waiting for tower repair")
+            while not tower and not info.sold and not token.stop and not token.skip
                 and os.clock() - start < (opts.RepairWait or 60) do
                 task.wait(0.25)
                 tower = current()
@@ -1045,11 +1089,12 @@ local function runStep(e, idMap, token, opts)
         end
         if not tower then return false, (info and info.sold) and "tower sold" or "tower missing" end
 
-        if checkMoney and e.cash and not M.WaitForCash(e.cash, moneyWait) then
+        if checkMoney and e.cash and not waitCash(e.cash, moneyWait, token) then
             return false, "insufficient funds"
         end
         for _ = 1, retries do
             if token.stop then return false, "stopped" end
+            if token.skip then return false, "skipped" end
             tower = current() or tower
             if not isTowerValid(tower) then return false, "tower missing" end
             if M.UpgradeTower(tower).Success then
@@ -1114,24 +1159,71 @@ function M.Play(nameOrMacro, opts)
     local timed   = (opts.Mode or "Timed") == "Timed"
     local maxWait = opts.MaxWait or 10
 
+    local info = {
+        name = macroName, macro = macro, index = 1, status = "starting", paused = false,
+        start = os.clock(), timed = timed, results = setmetatable({}, { __mode = "k" }),
+    }
+    Player.info = info
+
     task.spawn(function()
-        local idMap, start, completed = Track.idMap, os.clock(), true
-        for i, entry in ipairs(macro.entries) do
-            if token.stop then completed = false break end
-            if timed and entry.t then
-                local wait = entry.t - (os.clock() - start)
-                if wait > 0 then task.wait(math.min(wait, maxWait)) end
+        local idMap, completed = Track.idMap, true
+
+        local function pauseWait()
+            while info.paused and not token.stop do
+                local t0 = os.clock()
+                info.status = "paused"
+                task.wait(0.1)
+                info.start += os.clock() - t0 -- paused time doesn't count towards step timing
             end
-            local ok, reason = runStep(entry, idMap, token, opts)
-            if opts.OnStep then pcall(opts.OnStep, i, entry, ok, reason) end
         end
+
+        local i = 1
+        while i <= #macro.entries do -- re-evaluated every step so live edits take effect
+            local entry = macro.entries[i]
+            info.index = i
+            if token.stop then completed = false break end
+            pauseWait()
+            if token.stop then completed = false break end
+            token.skip = false
+
+            if entry.disabled then
+                info.results[entry] = { ok = true, reason = "disabled" }
+            else
+                if timed and entry.t then
+                    local waitStart = os.clock()
+                    while not token.stop and not token.skip do
+                        pauseWait()
+                        local remaining = entry.t - (os.clock() - info.start)
+                        if remaining <= 0 or os.clock() - waitStart >= maxWait then break end
+                        info.status = string.format("waiting %.1fs", remaining)
+                        task.wait(0.05)
+                    end
+                end
+
+                local ok, reason
+                if token.skip then
+                    ok, reason = false, "skipped"
+                elseif token.stop then
+                    completed = false
+                    break
+                else
+                    info.status = "running " .. tostring(entry.type)
+                    ok, reason = runStep(entry, idMap, token, opts)
+                end
+                info.results[entry] = { ok = ok, reason = reason }
+                if opts.OnStep then pcall(opts.OnStep, i, entry, ok, reason) end
+            end
+            token.skip = false
+            i += 1
+        end
+        info.status = completed and "finished" or "stopped"
         if Player.token == token then Player.token = nil end
         if opts.OnDone then pcall(opts.OnDone, completed) end
 
         if completed and opts.After then
             if opts.After == "Repeat" then
                 task.wait(opts.RepeatDelay or 1)
-                if M.IsGame() then M.Play(macro, opts) end
+                if M.IsGame() then M.Play(macroName or macro, opts) end
             elseif opts.After == "Shutdown" then
                 pcall(function() game:Shutdown() end)
             elseif opts.After == "Lobby" then

@@ -402,9 +402,3 @@ print(
     .. tostring(MACRO)
     .. "', PreRender win/lose + Award detection."
 )
-
-loadstring(
-    game:HttpGet(
-        "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/farmchecker"
-    )
-)()

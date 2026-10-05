@@ -1,1300 +1,302 @@
 local env = (getgenv and getgenv()) or _G
 
-
-
-local API_URL = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/testingapi"
-
+local API_URL  = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/testingapi"
 local FARM_URL = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/coolfarm"
 
-
-
 local MACRO = "exponentzz"
+local VOTE  = "Normal" -- "Easy" | "Normal" | "Hard" | "Start"
 
-local VOTE = "Normal"
-
-
+-- Optional: if you land in the lobby (loadout fix, teleport, etc.) rejoin automatically.
+-- Example: { Elevator = "Main", Map = "Baseplate", Mods = {}, Players = 1 }
+local AUTO_JOIN = nil
 
 local Players = game:GetService("Players")
-
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
 local RunService = game:GetService("RunService")
-
-
 
 local LocalPlayer = Players.LocalPlayer
 
-
-
 if not game:IsLoaded() then
-
     game.Loaded:Wait()
-
 end
-
-
 
 if env.TD_FARM_CLEANUP then
-
     pcall(env.TD_FARM_CLEANUP)
-
 end
 
-
-
+---------------------------------------------------------------------
+-- Lifecycle
+---------------------------------------------------------------------
+local TD
 local aliveState = true
-
 local connections = {}
 
-
-
 local function connect(signal, callback)
-
     local connection = signal:Connect(callback)
-
     table.insert(connections, connection)
-
     return connection
-
 end
-
-
 
 local function cleanup()
-
-    if not aliveState then
-
-        return
-
-    end
-
-
-
+    if not aliveState then return end
     aliveState = false
 
-
-
     for i = #connections, 1, -1 do
-
-        local connection = connections[i]
-
-
-
-        if connection then
-
-            pcall(function()
-
-                connection:Disconnect()
-
-            end)
-
-        end
-
-
-
+        local c = connections[i]
+        if c then pcall(function() c:Disconnect() end) end
         connections[i] = nil
-
     end
 
+    if TD then pcall(TD.Stop) end -- stop any macro still replaying
 end
-
-
 
 env.TD_FARM_CLEANUP = cleanup
 
-
-
 local token = {}
-
 env.TD_FARM_TOKEN = token
 
-
-
 local function alive()
-
     return aliveState and env.TD_FARM_TOKEN == token
-
 end
 
-
-
+---------------------------------------------------------------------
+-- Load API
+---------------------------------------------------------------------
 env.TD_LOADER_URL = API_URL
 
-
-
-local TD = loadstring(game:HttpGet(API_URL))()
-
-
-
-if not alive() then
-
-    return
-
-end
-
-
+TD = loadstring(game:HttpGet(API_URL))()
+if not alive() then return end
 
 TD.SetAntiAFK(true)
+TD.QueueOnTeleport(string.format("loadstring(game:HttpGet(%q))()", FARM_URL))
 
+if AUTO_JOIN then
+    -- the API's own lobby handler will fix loadouts, then join this elevator
+    TD.SetAutoRun({ AutoJoin = AUTO_JOIN })
+end
 
-
-TD.QueueOnTeleport(
-
-    string.format(
-
-        "loadstring(game:HttpGet(%q))()",
-
-        FARM_URL
-
-    )
-
-)
-
-
-
+---------------------------------------------------------------------
+-- Loading
+---------------------------------------------------------------------
 local function waitUntilFullyLoaded()
+    if not alive() or not TD.IsGame() then return false end
 
-    if not alive() or not TD.IsGame() then
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    if not alive() then return false end
 
-        return false
-
-    end
-
-
-
-    local char = LocalPlayer.Character
-
-        or LocalPlayer.CharacterAdded:Wait()
-
-
-
-    if not alive() then
-
-        return false
-
-    end
-
-
-
-    if not char:WaitForChild("HumanoidRootPart", 15) then
-
-        return false
-
-    end
-
-
+    if not char:WaitForChild("HumanoidRootPart", 15) then return false end
 
     local hum = char:WaitForChild("Humanoid", 15)
+    if not hum then return false end
 
-
-
-    if not hum then
-
-        return false
-
-    end
-
-
-
-    while alive() and hum.Health <= 0 do
-
-        task.wait(0.2)
-
-    end
-
-
-
-    if not alive() then
-
-        return false
-
-    end
-
-
+    while alive() and hum.Health <= 0 do task.wait(0.2) end
+    if not alive() then return false end
 
     local Events = ReplicatedStorage:WaitForChild("Events", 30)
-
-
-
-    if not Events then
-
-        return false
-
-    end
-
-
+    if not Events then return false end
 
     local GameEvents = Events:WaitForChild("Game", 30)
+    if not GameEvents then return false end
 
-
-
-    if not GameEvents then
-
-        return false
-
-    end
-
-
-
-    if not GameEvents:WaitForChild("StartGame", 30) then
-
-        return false
-
-    end
-
-
-
-    if not workspace:WaitForChild("Towers", 30) then
-
-        return false
-
-    end
-
-
+    if not GameEvents:WaitForChild("StartGame", 30) then return false end
+    if not workspace:WaitForChild("Towers", 30) then return false end
 
     local PlayerGui = LocalPlayer:WaitForChild("PlayerGui", 30)
-
-
-
-    if not PlayerGui then
-
-        return false
-
-    end
-
-
-
-    if not PlayerGui:WaitForChild("GameGUI", 30) then
-
-        return false
-
-    end
-
-
+    if not PlayerGui then return false end
+    if not PlayerGui:WaitForChild("GameGUI", 30) then return false end
 
     task.wait(1)
-
-
-
     return alive()
-
 end
-
-
 
 local function startGameMode()
-
-    if not alive() then
-
-        return
-
-    end
-
-
+    if not alive() then return end
 
     if VOTE == "Start" then
-
-        local StartGame = ReplicatedStorage
-
-            :WaitForChild("Events")
-
-            :WaitForChild("Game")
-
-            :WaitForChild("StartGame")
-
-
-
-        StartGame:FireServer()
-
-
-
+        ReplicatedStorage:WaitForChild("Events"):WaitForChild("Game"):WaitForChild("StartGame"):FireServer()
         print("[TD Farm] Fired StartGame remote.")
-
     else
-
         TD.Vote(VOTE)
-
-
-
         print("[TD Farm] Voted: " .. tostring(VOTE))
-
     end
-
 end
 
-
-
+---------------------------------------------------------------------
+-- Round
+---------------------------------------------------------------------
 local farming = false
-
 local restarting = false
 
-
-
 local function startRound()
-
-    if farming or restarting or not alive() or not TD.IsGame() then
-
-        return
-
-    end
-
-
-
+    if farming or restarting or not alive() or not TD.IsGame() then return end
     farming = true
 
-
-
-    if not waitUntilFullyLoaded() then
-
+    if not waitUntilFullyLoaded() or not alive() or not TD.IsGame() then
         farming = false
-
         return
-
     end
-
-
-
-    if not alive() or not TD.IsGame() then
-
-        farming = false
-
-        return
-
-    end
-
-
 
     startGameMode()
-
-
-
     task.wait(1)
 
-
-
     if not alive() then
-
         farming = false
-
         return
-
     end
-
-
 
     local playDone = false
-
-
-
     local result = TD.Play(MACRO, {
-
         Mode = "Timed",
-
-
-
-        OnDone = function()
-
-            playDone = true
-
-        end,
-
+        OnDone = function() playDone = true end,
     })
 
-
-
     if not result.Success then
-
-        warn(
-
-            "[TD Farm] Play failed: "
-
-            .. tostring(result.Error)
-
-            .. " ["
-
-            .. tostring(result.Code)
-
-            .. "]"
-
-        )
-
-
-
-        TD.Notify(
-
-            "Auto-farm: " .. tostring(result.Error),
-
-            Color3.new(1, 0, 0)
-
-        )
-
-
-
+        warn("[TD Farm] Play failed: " .. tostring(result.Error) .. " [" .. tostring(result.Code) .. "]")
+        TD.Notify("Auto-farm: " .. tostring(result.Error), Color3.new(1, 0, 0))
         farming = false
-
         return
-
     end
 
-
-
-    while alive()
-
-        and not playDone
-
-        and TD.IsPlaying()
-
-    do
-
+    while alive() and not playDone and TD.IsPlaying() do
         task.wait(0.5)
-
     end
-
-
 
     farming = false
-
 end
 
+---------------------------------------------------------------------
+-- End screen detection
+---------------------------------------------------------------------
+local Win, Lose
+local lastWinVisible, lastLoseVisible = false, false
 
+local function refreshEndScreen()
+    Win, Lose = nil, nil
 
-local function doRestart(reason)
+    local PlayerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    local GameGUI = PlayerGui and PlayerGui:FindFirstChild("GameGUI")
+    local EndScreen = GameGUI and GameGUI:FindFirstChild("EndScreen")
+    if not EndScreen then return end
 
-    if restarting or not alive() then
+    Win = EndScreen:FindFirstChild("Win")
+    Lose = EndScreen:FindFirstChild("Lose")
+end
 
-        return
+local function endScreenShown()
+    refreshEndScreen()
+    return (Win and Win.Visible) or (Lose and Lose.Visible) or false
+end
 
+-- Wait until the new round is actually ready after Restart.
+local function waitForRestartComplete()
+    local start = os.clock()
+    while alive() and os.clock() - start < 30 do
+        if not endScreenShown() then break end
+        task.wait(0.25)
     end
 
+    start = os.clock()
+    while alive() and os.clock() - start < 15 do
+        local folder = workspace:FindFirstChild("Towers")
+        if not folder or #folder:GetChildren() == 0 then break end
+        task.wait(0.25)
+    end
 
+    task.wait(2)
+end
 
+local function doRestart(reason)
+    if restarting or not alive() then return end
     restarting = true
-
-
 
     print("[TD Farm] Restart triggered by: " .. tostring(reason))
 
+    pcall(TD.Stop)
 
+    -- let startRound's loop notice the stop before we begin the next one
+    local t = os.clock()
+    while farming and alive() and os.clock() - t < 5 do task.wait(0.1) end
 
-    pcall(function()
+    task.wait(2) -- give the stats tracker time to read the end screen
 
-        TD.Stop()
+    if not alive() then restarting = false return end
+    pcall(TD.Restart)
 
-    end)
+    -- if Restart reloads the server this script dies and is re-queued by QueueOnTeleport;
+    -- otherwise we continue here and start the next round ourselves
+    waitForRestartComplete()
 
+    lastWinVisible, lastLoseVisible = false, false
+    restarting = false
 
-
-    task.wait(2)
-
-
-
-    if alive() then
-
-        pcall(function()
-
-            TD.Restart()
-
-        end)
-
+    if alive() and TD.IsGame() then
+        startRound()
     end
-
 end
 
-
-
-local Win
-
-local Lose
-
-
-
-local function refreshEndScreen()
-
-    Win = nil
-
-    Lose = nil
-
-
-
-    local PlayerGui = LocalPlayer:FindFirstChild("PlayerGui")
-
-
-
-    if not PlayerGui then
-
-        return
-
-    end
-
-
-
-    local GameGUI = PlayerGui:FindFirstChild("GameGUI")
-
-
-
-    if not GameGUI then
-
-        return
-
-    end
-
-
-
-    local EndScreen = GameGUI:FindFirstChild("EndScreen")
-
-
-
-    if not EndScreen then
-
-        return
-
-    end
-
-
-
-    Win = EndScreen:FindFirstChild("Win")
-
-    Lose = EndScreen:FindFirstChild("Lose")
-
-end
-
-
-
-local lastWinVisible = false
-
-local lastLoseVisible = false
-
-
-
+local lastCheck = 0
 local function checkWinLoss()
+    if not alive() or restarting then return end
 
-    if not alive() or restarting then
+    local now = os.clock()
+    if now - lastCheck < 0.1 then return end
+    lastCheck = now
 
-        return
-
-    end
-
-
-
-    if not Win or not Win.Parent
-
-        or not Lose or not Lose.Parent
-
-    then
-
+    if not Win or not Win.Parent or not Lose or not Lose.Parent then
         refreshEndScreen()
-
     end
+    if not Win or not Lose then return end
 
-
-
-    if not Win or not Lose then
-
-        return
-
-    end
-
-
-
-    local winVisible = Win.Visible
-
-    local loseVisible = Lose.Visible
-
-
+    local winVisible, loseVisible = Win.Visible, Lose.Visible
 
     if winVisible and not lastWinVisible then
-
-        lastWinVisible = winVisible
-
-        lastLoseVisible = loseVisible
-
-
-
+        lastWinVisible, lastLoseVisible = winVisible, loseVisible
         print("[TD Farm] Win detected.")
-
-
-
-        task.spawn(function()
-
-            doRestart("WinScreen")
-
-        end)
-
-
-
+        task.spawn(doRestart, "WinScreen")
         return
-
     end
-
-
 
     if loseVisible and not lastLoseVisible then
-
-        lastWinVisible = winVisible
-
-        lastLoseVisible = loseVisible
-
-
-
+        lastWinVisible, lastLoseVisible = winVisible, loseVisible
         print("[TD Farm] Lose detected.")
-
-
-
-        task.spawn(function()
-
-            doRestart("LoseScreen")
-
-        end)
-
-
-
+        task.spawn(doRestart, "LoseScreen")
         return
-
     end
 
-
-
-    lastWinVisible = winVisible
-
-    lastLoseVisible = loseVisible
-
+    lastWinVisible, lastLoseVisible = winVisible, loseVisible
 end
-
-
 
 connect(RunService.PreRender, checkWinLoss)
 
-
-
 local function setupAwardWatcher()
-
     local Events = ReplicatedStorage:WaitForChild("Events", 30)
-
-
-
-    if not Events then
-
-        return
-
-    end
-
-
+    if not Events then return end
 
     local GameEvents = Events:WaitForChild("Game", 30)
-
-
-
-    if not GameEvents then
-
-        return
-
-    end
-
-
+    if not GameEvents then return end
 
     local AwardEvent = GameEvents:WaitForChild("Award", 30)
+    if not AwardEvent or not alive() then return end
 
+    connect(AwardEvent.OnClientEvent, function(awardId, awardName)
+        if restarting or not alive() then return end
 
-
-    if not AwardEvent then
-
-        return
-
-    end
-
-
-
-    connect(
-
-        AwardEvent.OnClientEvent,
-
-        function(awardId, awardName)
-
-            if restarting or not alive() then
-
-                return
-
-            end
-
-
-
-            print(
-
-                "[TD Farm] Award event fired — id="
-
-                .. tostring(awardId)
-
-                .. ", name="
-
-                .. tostring(awardName)
-
-            )
-
-
-
-            task.spawn(function()
-
-                doRestart("AwardEvent")
-
-            end)
-
-        end
-
-    )
-
+        print("[TD Farm] Award event fired - id=" .. tostring(awardId) .. ", name=" .. tostring(awardName))
+        task.spawn(doRestart, "AwardEvent")
+    end)
 end
 
-
-
-connect(
-
-    Players.PlayerRemoving,
-
-    function(player)
-
-        if player == LocalPlayer then
-
-            cleanup()
-
-        end
-
-    end
-
-)
-
-
+connect(Players.PlayerRemoving, function(player)
+    if player == LocalPlayer then cleanup() end
+end)
 
 task.spawn(function()
-
-    if not waitUntilFullyLoaded() then
-
-        return
-
-    end
-
-
-
-    if not alive() or not TD.IsGame() then
-
-        return
-
-    end
-
-
+    if not waitUntilFullyLoaded() then return end
+    if not alive() or not TD.IsGame() then return end
 
     refreshEndScreen()
-
     setupAwardWatcher()
-
     startRound()
-
 end)
 
-
-
-print(
-
-    "[TD Farm] Running: mode="
-
-    .. tostring(VOTE)
-
-    .. ", macro='"
-
-    .. tostring(MACRO)
-
-    .. "', PreRender win/lose + Award detection."
-
-)
-
-
---[[
-    Doomspire Defense - Game Stats Tracker
-
-    Tracks:
-        • Bricks
-        • Bux
-        • XP
-        • Run time
-        • Runs completed
-        • Per-hour rewards
-
-    Discord:
-        _G.DiscordWebhook = ""
-
-        Leave empty = Discord disabled
-        Put your webhook URL = Discord enabled
-
-    Failsafe:
-        Failed Discord sends are saved to:
-            TDMacros/GameStats/GameStats.json
-
-    Uses RunService.PreRender to efficiently monitor the EndScreen.
-]]
-
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local HttpService = game:GetService("HttpService")
-
-local Player = Players.LocalPlayer
-
-_G.DiscordWebhook = _G.DiscordWebhook or ""
-
----------------------------------------------------------------------
--- Configuration
----------------------------------------------------------------------
-
-local WEBHOOK_ENABLED = _G.DiscordWebhook ~= ""
-
-local STATS_PATH = "TDMacros/GameStats"
-local STATS_FILE = STATS_PATH .. "/GameStats.json"
-
-local CHECK_INTERVAL = 0.1
-
----------------------------------------------------------------------
--- UI
----------------------------------------------------------------------
-
-local function getUI()
-    local PlayerGui = Player:FindFirstChild("PlayerGui")
-    if not PlayerGui then
-        return nil
-    end
-
-    local GameGUI = PlayerGui:FindFirstChild("GameGUI")
-    if not GameGUI then
-        return nil
-    end
-
-    local EndScreen = GameGUI:FindFirstChild("EndScreen")
-    if not EndScreen then
-        return nil
-    end
-
-    local Rewards = EndScreen:FindFirstChild("Rewards")
-    local Stats = EndScreen:FindFirstChild("Stats")
-
-    if not Rewards or not Stats then
-        return nil
-    end
-
-    local RewardsList = Rewards:FindFirstChild("RewardsList")
-    local Bricks = RewardsList and RewardsList:FindFirstChild("Bricks")
-    local Bux = RewardsList and RewardsList:FindFirstChild("Bux")
-    local XP = RewardsList and RewardsList:FindFirstChild("XP")
-
-    local BricksAmount = Bricks and Bricks:FindFirstChild("Amount")
-    local BuxAmount = Bux and Bux:FindFirstChild("Amount")
-    local XPAmount = XP and XP:FindFirstChild("Amount")
-
-    local Time = Stats:FindFirstChild("Time")
-
-    if not BricksAmount or not BuxAmount or not XPAmount or not Time then
-        return nil
-    end
-
-    return {
-        Bricks = BricksAmount,
-        Bux = BuxAmount,
-        XP = XPAmount,
-        Time = Time,
-    }
-end
-
----------------------------------------------------------------------
--- File system
----------------------------------------------------------------------
-
-local function ensureFolder()
-    if not isfolder then
-        return false
-    end
-
-    if not isfolder("TDMacros") then
-        makefolder("TDMacros")
-    end
-
-    if not isfolder(STATS_PATH) then
-        makefolder(STATS_PATH)
-    end
-
-    return true
-end
-
-ensureFolder()
-
----------------------------------------------------------------------
--- JSON file helpers
----------------------------------------------------------------------
-
-local function readStatsFile()
-    if not isfile or not readfile then
-        return {
-            FailedWebhooks = {}
-        }
-    end
-
-    if not isfile(STATS_FILE) then
-        return {
-            FailedWebhooks = {}
-        }
-    end
-
-    local success, data = pcall(function()
-        return HttpService:JSONDecode(readfile(STATS_FILE))
-    end)
-
-    if success and type(data) == "table" then
-        data.FailedWebhooks = data.FailedWebhooks or {}
-        return data
-    end
-
-    return {
-        FailedWebhooks = {}
-    }
-end
-
-local function saveStatsFile(data)
-    if not writefile then
-        return false
-    end
-
-    ensureFolder()
-
-    local success = pcall(function()
-        writefile(
-            STATS_FILE,
-            HttpService:JSONEncode(data)
-        )
-    end)
-
-    return success
-end
-
----------------------------------------------------------------------
--- Save failed Discord webhook
----------------------------------------------------------------------
-
-local function saveFailedWebhook(payload, errorMessage)
-    local data = readStatsFile()
-
-    table.insert(data.FailedWebhooks, {
-        Timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
-        Error = tostring(errorMessage or "Unknown error"),
-        Payload = payload,
-    })
-
-    saveStatsFile(data)
-
-    warn("[GameStats] Discord send failed - saved to GameStats.json")
-end
-
----------------------------------------------------------------------
--- HTTP request
----------------------------------------------------------------------
-
-local function sendWebhook(payload)
-    if not WEBHOOK_ENABLED then
-        return true
-    end
-
-    local requestFunction =
-        (syn and syn.request)
-        or (http and http.request)
-        or http_request
-        or request
-
-    if not requestFunction then
-        saveFailedWebhook(
-            payload,
-            "No HTTP request function available"
-        )
-
-        return false
-    end
-
-    local success, response = pcall(function()
-        return requestFunction({
-            Url = _G.DiscordWebhook,
-            Method = "POST",
-
-            Headers = {
-                ["Content-Type"] = "application/json"
-            },
-
-            Body = HttpService:JSONEncode(payload)
-        })
-    end)
-
-    if not success then
-        saveFailedWebhook(
-            payload,
-            response
-        )
-
-        return false
-    end
-
-    if response and response.StatusCode then
-        if response.StatusCode < 200 or response.StatusCode >= 300 then
-            saveFailedWebhook(
-                payload,
-                "HTTP " .. tostring(response.StatusCode)
-            )
-
-            return false
-        end
-    end
-
-    return true
-end
-
----------------------------------------------------------------------
--- Number parsing
----------------------------------------------------------------------
-
-local function parseNumber(value)
-    if value == nil then
-        return 0
-    end
-
-    value = tostring(value)
-
-    -- Remove commas and anything that isn't part of a number.
-    value = value:gsub(",", "")
-
-    local number = value:match("-?%d+%.?%d*")
-
-    return tonumber(number) or 0
-end
-
----------------------------------------------------------------------
--- Time parsing
---
--- Supports:
---     12:34
---     1:12:34
---     12.5
---     12 seconds
----------------------------------------------------------------------
-
-local function parseTime(value)
-    if value == nil then
-        return 0
-    end
-
-    local text = tostring(value)
-
-    local minutes, seconds = text:match("(%d+):(%d+)")
-
-    if minutes and seconds then
-        return tonumber(minutes) * 60 + tonumber(seconds)
-    end
-
-    return tonumber(text:match("%d+")) or 0
-end
-
----------------------------------------------------------------------
--- Formatting
----------------------------------------------------------------------
-
-local function formatNumber(number)
-    local formatted = tostring(math.floor(number + 0.5))
-
-    while true do
-        local new, count = formatted:gsub(
-            "^(-?%d+)(%d%d%d)",
-            "%1,%2"
-        )
-
-        formatted = new
-
-        if count == 0 then
-            break
-        end
-    end
-
-    return formatted
-end
-
-local function formatTime(totalSeconds)
-    totalSeconds = math.floor(totalSeconds)
-
-    local minutes = math.floor(totalSeconds / 60)
-    local seconds = totalSeconds % 60
-
-    return string.format("%02d:%02d", minutes, seconds)
-end
-
----------------------------------------------------------------------
--- State
----------------------------------------------------------------------
-
-local RunCount = 0
-local LastProcessedTime = nil
-local LastCheck = 0
-
----------------------------------------------------------------------
--- Process completed run
----------------------------------------------------------------------
-
-local function processRun()
-    local UI = getUI()
-
-    if not UI then
-        return
-    end
-
-    local bricks = parseNumber(UI.Bricks.Text)
-    local bux = parseNumber(UI.Bux.Text)
-    local xp = parseNumber(UI.XP.Text)
-
-    local runTime = parseTime(UI.Time.Text)
-
-    -- Don't process an invalid / unloaded result.
-    if runTime <= 0 then
-        return
-    end
-
-    -- Prevent processing the exact same EndScreen repeatedly.
-    local runIdentifier =
-        tostring(runTime)
-        .. ":"
-        .. tostring(bricks)
-        .. ":"
-        .. tostring(bux)
-        .. ":"
-        .. tostring(xp)
-
-    if LastProcessedTime == runIdentifier then
-        return
-    end
-
-    LastProcessedTime = runIdentifier
-    RunCount += 1
-
-    -----------------------------------------------------------------
-    -- Per hour
-    -----------------------------------------------------------------
-
-    local hours = runTime / 3600
-
-    local bricksPerHour = bricks / hours
-    local buxPerHour = bux / hours
-    local xpPerHour = xp / hours
-
-    -----------------------------------------------------------------
-    -- Console
-    -----------------------------------------------------------------
-
-    print("")
-    print("========================================")
-    print("[GameStats] RUN #" .. RunCount)
-    print("========================================")
-
-    print("Time:   " .. formatTime(runTime))
-
-    print("")
-    print("Rewards:")
-    print("  Bricks: " .. formatNumber(bricks))
-    print("  Bux:    " .. formatNumber(bux))
-    print("  XP:     " .. formatNumber(xp))
-
-    print("")
-    print("Per Hour:")
-    print("  Bricks: " .. formatNumber(bricksPerHour) .. "/hr")
-    print("  Bux:    " .. formatNumber(buxPerHour) .. "/hr")
-    print("  XP:     " .. formatNumber(xpPerHour) .. "/hr")
-
-    print("")
-    print("Total Runs: #" .. RunCount)
-    print("========================================")
-
-    -----------------------------------------------------------------
-    -- Discord
-    -----------------------------------------------------------------
-
-    if WEBHOOK_ENABLED then
-        local payload = {
-            username = "Doomspire Farm",
-
-            embeds = {{
-                title = "Doomspire Defense — Run #" .. RunCount,
-
-                fields = {
-                    {
-                        name = "⏱️ Run Time",
-                        value = formatTime(runTime),
-                        inline = true
-                    },
-
-                    {
-                        name = "📦 Rewards",
-                        value =
-                            "🧱 Bricks: **"
-                            .. formatNumber(bricks)
-                            .. "**\n"
-                            .. "💰 Bux: **"
-                            .. formatNumber(bux)
-                            .. "**\n"
-                            .. "⭐ XP: **"
-                            .. formatNumber(xp)
-                            .. "**",
-                        inline = true
-                    },
-
-                    {
-                        name = "📈 Per Hour",
-                        value =
-                            "🧱 Bricks: **"
-                            .. formatNumber(bricksPerHour)
-                            .. "/hr**\n"
-                            .. "💰 Bux: **"
-                            .. formatNumber(buxPerHour)
-                            .. "/hr**\n"
-                            .. "⭐ XP: **"
-                            .. formatNumber(xpPerHour)
-                            .. "/hr**",
-                        inline = false
-                    },
-
-                    {
-                        name = "🔄 Runs",
-                        value = "#" .. RunCount,
-                        inline = true
-                    }
-                },
-
-                footer = {
-                    text = "Doomspire Defense Farm"
-                },
-
-                timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
-            }}
-        }
-
-        local sent = sendWebhook(payload)
-
-        if sent then
-            print("[GameStats] Discord webhook sent.")
-        end
-    end
-end
-
----------------------------------------------------------------------
--- PreRender monitoring
----------------------------------------------------------------------
-
-RunService.PreRender:Connect(function()
-    local now = os.clock()
-
-    if now - LastCheck < CHECK_INTERVAL then
-        return
-    end
-
-    LastCheck = now
-
-    processRun()
-end)
-
-print("[GameStats] Tracker started.")
-print("[GameStats] Discord:", WEBHOOK_ENABLED and "Enabled" or "Disabled")
+print("[TD Farm] Running: mode=" .. tostring(VOTE) .. ", macro='" .. tostring(MACRO) .. "', PreRender win/lose + Award detection.")

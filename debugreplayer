@@ -1,0 +1,756 @@
+--[[
+    Replay Debugger  (needs the updated td_api.lua)
+
+    Toggle:   getgenv().ReplayUI = true   -- show
+              getgenv().ReplayUI = false  -- hide
+    Run once: loadstring(game:HttpGet("<url of this file>"))()
+    Destroy:  getgenv().ReplayUIDestroy()
+
+    What it does
+      - Shows every step of the macro being replayed (done / failed / current / upcoming)
+        with a countdown to when the next steps will fire.
+      - Edit upcoming steps live (time, cash, tower, position...), disable / delete / move
+        them, shift the timing of everything after a step, pause, or skip the current step.
+      - Every change is saved to TDMacros/<name>.json, and the previous version is first copied to
+        TDMacros/Backups/<name>__<timestamp>.json so you can always revert (Backups button).
+]]
+
+local API_URL = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/testingapi"
+local MAX_BACKUPS_PER_MACRO = 50
+
+local env = (getgenv and getgenv()) or _G
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
+
+if env.ReplayUIDestroy then pcall(env.ReplayUIDestroy) end
+if env.ReplayUI == nil then env.ReplayUI = true end
+
+local TD = env.TDAPI
+if not TD or not TD.GetPlayback then
+    TD = loadstring(game:HttpGet(API_URL))()
+end
+if not TD.GetPlayback then
+    error("[ReplayUI] td_api.lua is too old (no GetPlayback). Upload the updated API.")
+end
+
+---------------------------------------------------------------------
+-- Files / backups
+---------------------------------------------------------------------
+local BACKUP_DIR = TD.Folder .. "/Backups"
+
+local function ensureDirs()
+    if not (isfolder and makefolder) then return end
+    if not isfolder(TD.Folder) then makefolder(TD.Folder) end
+    if not isfolder(BACKUP_DIR) then makefolder(BACKUP_DIR) end
+end
+
+local function macroPath(name) return TD.Folder .. "/" .. name .. ".json" end
+
+local function stamp()
+    return os.date("%Y%m%d_%H%M%S")
+end
+
+local function backupFileFor(name)
+    local base = string.format("%s/%s__%s", BACKUP_DIR, name, stamp())
+    local path, n = base .. ".json", 1
+    while isfile and isfile(path) do
+        n += 1
+        path = string.format("%s_%d.json", base, n)
+    end
+    return path
+end
+
+local function listBackups(name)
+    local out = {}
+    if not (listfiles and isfolder and isfolder(BACKUP_DIR)) then return out end
+    local prefix = name .. "__"
+    for _, p in ipairs(listfiles(BACKUP_DIR)) do
+        local base = p:match("([^/\\]+)%.json$")
+        if base and base:sub(1, #prefix) == prefix then
+            table.insert(out, { path = p, label = base:sub(#prefix + 1), base = base })
+        end
+    end
+    table.sort(out, function(a, b) return a.base > b.base end) -- newest first
+    return out
+end
+
+local function pruneBackups(name)
+    local list = listBackups(name)
+    for i = #list, MAX_BACKUPS_PER_MACRO + 1, -1 do
+        if delfile then pcall(delfile, list[i].path) end
+    end
+end
+
+-- copy whatever is currently on disk into Backups/ (the "old version")
+local function backupDiskVersion(name)
+    if not (isfile and readfile and writefile) then return false end
+    local path = macroPath(name)
+    if not isfile(path) then return false end
+    ensureDirs()
+    local ok = pcall(function() writefile(backupFileFor(name), readfile(path)) end)
+    if ok then pruneBackups(name) end
+    return ok
+end
+
+local function writeBackupRaw(name, json)
+    if not writefile then return false end
+    ensureDirs()
+    local ok = pcall(function() writefile(backupFileFor(name), json) end)
+    if ok then pruneBackups(name) end
+    return ok
+end
+
+---------------------------------------------------------------------
+-- State
+---------------------------------------------------------------------
+local view = {
+    macro = nil, name = nil, live = false,
+    selected = nil,      -- the selected entry table
+    dirty = false,
+    autosave = true,
+    showBackups = false,
+    lastIndex = nil,
+}
+
+local conns = {}
+local function connect(sig, fn)
+    local c = sig:Connect(fn)
+    table.insert(conns, c)
+    return c
+end
+
+---------------------------------------------------------------------
+-- GUI helpers
+---------------------------------------------------------------------
+local C = {
+    bg = Color3.fromRGB(22, 22, 28), panel = Color3.fromRGB(32, 32, 40), row = Color3.fromRGB(38, 38, 48),
+    sel = Color3.fromRGB(55, 70, 110), btn = Color3.fromRGB(52, 54, 70), btnOn = Color3.fromRGB(70, 110, 80),
+    text = Color3.fromRGB(230, 230, 235), dim = Color3.fromRGB(140, 140, 150),
+    ok = Color3.fromRGB(90, 205, 130), bad = Color3.fromRGB(235, 95, 95),
+    cur = Color3.fromRGB(255, 212, 85), skip = Color3.fromRGB(150, 150, 160),
+}
+
+local function make(class, props, parent)
+    local o = Instance.new(class)
+    for k, v in pairs(props) do o[k] = v end
+    if parent then o.Parent = parent end
+    return o
+end
+
+local function corner(o, r) make("UICorner", { CornerRadius = UDim.new(0, r or 4) }, o) end
+
+local function label(parent, text, pos, size, props)
+    local l = make("TextLabel", {
+        BackgroundTransparency = 1, Text = text, Position = pos, Size = size,
+        TextColor3 = C.text, Font = Enum.Font.Code, TextSize = 12,
+        TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center,
+    }, parent)
+    for k, v in pairs(props or {}) do l[k] = v end
+    return l
+end
+
+local function button(parent, text, pos, size, cb)
+    local b = make("TextButton", {
+        Text = text, Position = pos, Size = size, BackgroundColor3 = C.btn, AutoButtonColor = true,
+        TextColor3 = C.text, Font = Enum.Font.Code, TextSize = 12, BorderSizePixel = 0,
+    }, parent)
+    corner(b)
+    if cb then b.MouseButton1Click:Connect(cb) end
+    return b
+end
+
+local function fmt(n)
+    if type(n) ~= "number" then return tostring(n) end
+    return tostring(math.floor(n * 1000 + 0.5) / 1000)
+end
+
+---------------------------------------------------------------------
+-- Window
+---------------------------------------------------------------------
+local parentGui
+do
+    local ok, h = pcall(function() return gethui and gethui() end)
+    parentGui = (ok and h) or nil
+    if not parentGui then
+        local ok2, core = pcall(function() return game:GetService("CoreGui") end)
+        parentGui = ok2 and core or Players.LocalPlayer:WaitForChild("PlayerGui")
+    end
+end
+
+local gui = make("ScreenGui", { Name = "TDReplayUI", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    DisplayOrder = 999, IgnoreGuiInset = true }, parentGui)
+
+local win = make("Frame", { Size = UDim2.fromOffset(480, 584), Position = UDim2.new(1, -500, 0, 60),
+    BackgroundColor3 = C.bg, BorderSizePixel = 0 }, gui)
+corner(win, 8)
+
+local titleBar = make("Frame", { Size = UDim2.new(1, 0, 0, 28), BackgroundColor3 = C.panel, BorderSizePixel = 0 }, win)
+corner(titleBar, 8)
+local titleText = label(titleBar, "Replay Debugger", UDim2.fromOffset(10, 0), UDim2.new(1, -50, 1, 0),
+    { Font = Enum.Font.GothamBold, TextSize = 13 })
+button(titleBar, "x", UDim2.new(1, -26, 0, 3), UDim2.fromOffset(22, 22), function() env.ReplayUI = false end)
+
+-- drag
+do
+    local dragging, dragStart, startPos
+    connect(titleBar.InputBegan, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging, dragStart, startPos = true, input.Position, win.Position
+        end
+    end)
+    connect(UIS.InputEnded, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+    connect(UIS.InputChanged, function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local d = input.Position - dragStart
+            win.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end)
+end
+
+-- info
+local infoBox = make("Frame", { Position = UDim2.fromOffset(6, 32), Size = UDim2.new(1, -12, 0, 46),
+    BackgroundColor3 = C.panel, BorderSizePixel = 0 }, win)
+corner(infoBox)
+local statusLabel = label(infoBox, "", UDim2.fromOffset(8, 2), UDim2.new(1, -16, 0, 20))
+local nextLabel = label(infoBox, "", UDim2.fromOffset(8, 22), UDim2.new(1, -16, 0, 22), { TextColor3 = C.cur })
+
+-- macro picker row
+local pickRow = make("Frame", { Position = UDim2.fromOffset(6, 82), Size = UDim2.new(1, -12, 0, 24), BackgroundTransparency = 1 }, win)
+local prevBtn = button(pickRow, "<", UDim2.fromOffset(0, 0), UDim2.fromOffset(26, 24))
+local macroLabel = label(pickRow, "", UDim2.fromOffset(30, 0), UDim2.fromOffset(250, 24), { TextXAlignment = Enum.TextXAlignment.Center })
+local nextBtn = button(pickRow, ">", UDim2.fromOffset(284, 0), UDim2.fromOffset(26, 24))
+local autoBtn = button(pickRow, "", UDim2.fromOffset(318, 0), UDim2.fromOffset(150, 24))
+
+-- controls row
+local ctlRow = make("Frame", { Position = UDim2.fromOffset(6, 110), Size = UDim2.new(1, -12, 0, 26), BackgroundTransparency = 1 }, win)
+local pauseBtn = button(ctlRow, "Pause", UDim2.fromOffset(0, 0), UDim2.fromOffset(88, 26))
+local skipBtn  = button(ctlRow, "Skip step", UDim2.fromOffset(92, 0), UDim2.fromOffset(88, 26))
+local stopBtn  = button(ctlRow, "Stop", UDim2.fromOffset(184, 0), UDim2.fromOffset(70, 26))
+local saveBtn  = button(ctlRow, "Save", UDim2.fromOffset(258, 0), UDim2.fromOffset(70, 26))
+local bkBtn    = button(ctlRow, "Backups", UDim2.fromOffset(332, 0), UDim2.fromOffset(136, 26))
+
+-- lists
+local function newList()
+    local sf = make("ScrollingFrame", {
+        Position = UDim2.fromOffset(6, 140), Size = UDim2.new(1, -12, 0, 220), BackgroundColor3 = C.panel,
+        BorderSizePixel = 0, ScrollBarThickness = 6, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    }, win)
+    corner(sf)
+    make("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 1) }, sf)
+    return sf
+end
+local stepList = newList()
+local backupList = newList()
+backupList.Visible = false
+
+-- edit panel
+local edit = make("Frame", { Position = UDim2.fromOffset(6, 364), Size = UDim2.new(1, -12, 0, 216),
+    BackgroundColor3 = C.panel, BorderSizePixel = 0 }, win)
+corner(edit)
+local editTitle = label(edit, "Select a step to edit it.", UDim2.fromOffset(8, 0), UDim2.new(1, -16, 0, 18), { TextColor3 = C.dim })
+local fieldHolder = make("Frame", { Position = UDim2.fromOffset(0, 20), Size = UDim2.new(1, 0, 0, 132), BackgroundTransparency = 1 }, edit)
+local msgLabel = label(edit, "", UDim2.fromOffset(8, 202), UDim2.new(1, -16, 0, 14), { TextSize = 11 })
+
+local function say(text, color)
+    msgLabel.Text = text
+    msgLabel.TextColor3 = color or C.text
+    local mine = text
+    task.delay(5, function() if msgLabel.Text == mine then msgLabel.Text = "" end end)
+end
+
+---------------------------------------------------------------------
+-- Macro helpers
+---------------------------------------------------------------------
+local function entries() return view.macro and view.macro.entries or {} end
+
+local function indexOf(entry)
+    for i, e in ipairs(entries()) do if e == entry then return i end end
+end
+
+local function describe(e)
+    local t = e.type
+    if t == "place" then
+        local cf = e.cf or {}
+        return string.format("place %s @ (%s, %s, %s)%s", tostring(e.tower), fmt(cf[1] or 0), fmt(cf[2] or 0), fmt(cf[3] or 0),
+            e.cash and (" $" .. fmt(e.cash)) or "")
+    elseif t == "upgrade" then
+        return string.format("upgrade #%s%s", tostring(e.id), e.cash and (" $" .. fmt(e.cash)) or "")
+    elseif t == "ability" then
+        return string.format("ability #%s%s", tostring(e.id), e.arg ~= nil and (" (" .. tostring(e.arg) .. ")") or "")
+    elseif t == "vote" then
+        return "vote " .. tostring(e.difficulty)
+    elseif t == "skip" then
+        return "skip wave"
+    end
+    return tostring(t)
+end
+
+local function saveMacro(quiet)
+    if not view.macro or not view.name then
+        if not quiet then say("Nothing to save (macro has no file name).", C.bad) end
+        return false
+    end
+    if not writefile then say("Executor has no writefile.", C.bad) return false end
+    backupDiskVersion(view.name) -- keep the old version before overwriting
+    local r = TD.SaveMacro(view.name, view.macro)
+    if not r.Success then say("Save failed: " .. tostring(r.Error), C.bad) return false end
+    view.dirty = false
+    if not quiet then say("Saved (old version backed up).", C.ok) end
+    return true
+end
+
+local function afterEdit(what)
+    view.dirty = true
+    if view.autosave and view.name then
+        if saveMacro(true) then say(what .. " - saved, old version backed up.", C.ok) return end
+    end
+    say(what .. (view.name and " - not saved yet (press Save)." or ""), C.cur)
+end
+
+local function loadMacroByName(name)
+    local r = TD.LoadMacro(name)
+    if not r.Success then say("Load failed: " .. tostring(r.Error), C.bad) return end
+    view.macro, view.name, view.live, view.selected, view.dirty = r.Data, name, false, nil, false
+    view.lastIndex = nil
+end
+
+---------------------------------------------------------------------
+-- Edit permissions while a macro is playing
+---------------------------------------------------------------------
+local function playback() return TD.GetPlayback() end
+
+-- field edits: allowed on the running step and anything after it
+local function canEditFields(entry)
+    local pb = playback()
+    if pb.Playing and view.live and pb.Macro == view.macro then
+        local i = indexOf(entry)
+        if i and i < pb.Index then say("That step already ran - edit it for the next round instead.", C.bad) return false end
+    end
+    return true
+end
+
+-- structural edits: only steps that haven't started yet
+local function canRestructure(entry)
+    local pb = playback()
+    if pb.Playing and view.live and pb.Macro == view.macro then
+        local i = indexOf(entry)
+        if i and i <= pb.Index then say("Step already started - use Disable/Skip, or edit steps after it.", C.bad) return false end
+    end
+    return true
+end
+
+---------------------------------------------------------------------
+-- Edit panel
+---------------------------------------------------------------------
+local fieldRows = {}   -- { spec, box }
+local actionButtons = {}
+
+local function numberSetter(e, key)
+    return function(txt)
+        if txt == "" then e[key] = nil return end
+        local n = tonumber(txt)
+        if not n then return "'" .. txt .. "' is not a number" end
+        e[key] = n
+    end
+end
+local function stringSetter(e, key)
+    return function(txt) e[key] = (txt ~= "") and txt or nil end
+end
+
+local function specsFor(e)
+    local specs = {}
+    local function add(name, get, set) table.insert(specs, { name = name, get = get, set = set }) end
+    local function num(name, key) add(name, function() return e[key] end, numberSetter(e, key)) end
+    local function str(name, key) add(name, function() return e[key] end, stringSetter(e, key)) end
+
+    if e.type == "place" then
+        str("tower", "tower"); num("cash", "cash"); num("time (t)", "t")
+        for idx, nm in ipairs({ "pos X", "pos Y", "pos Z" }) do
+            add(nm, function() return e.cf and e.cf[idx] end, function(txt)
+                local n = tonumber(txt)
+                if not n then return "'" .. txt .. "' is not a number" end
+                e.cf = e.cf or { 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1 }
+                e.cf[idx] = n
+            end)
+        end
+    elseif e.type == "upgrade" then
+        str("tower id", "id"); num("cash", "cash"); num("time (t)", "t")
+    elseif e.type == "ability" then
+        str("tower id", "id")
+        add("arg", function() return e.arg end, function(txt)
+            if txt == "" then e.arg = nil
+            elseif txt == "true" then e.arg = true
+            elseif txt == "false" then e.arg = false
+            elseif tonumber(txt) then e.arg = tonumber(txt)
+            else e.arg = txt end
+        end)
+        num("time (t)", "t")
+    elseif e.type == "vote" then
+        str("difficulty", "difficulty"); num("time (t)", "t")
+    else
+        num("time (t)", "t")
+    end
+    return specs
+end
+
+local function clearEditPanel()
+    for _, c in ipairs(fieldHolder:GetChildren()) do c:Destroy() end
+    for _, b in ipairs(actionButtons) do b:Destroy() end
+    fieldRows, actionButtons = {}, {}
+end
+
+local function refreshFieldTexts()
+    for _, f in ipairs(fieldRows) do
+        local v = f.spec.get()
+        f.box.Text = v == nil and "" or fmt(v)
+    end
+end
+
+local selectEntry
+
+local function applyFields()
+    local e = view.selected
+    if not e or not canEditFields(e) then return end
+    for _, f in ipairs(fieldRows) do
+        local err = f.spec.set(f.box.Text)
+        if err then say(f.spec.name .. ": " .. err, C.bad) return end
+    end
+    refreshFieldTexts()
+    afterEdit("Edited step " .. tostring(indexOf(e)))
+end
+
+local function toggleDisabled()
+    local e = view.selected
+    if not e or not canRestructure(e) then return end
+    e.disabled = (not e.disabled) or nil
+    selectEntry(e)
+    afterEdit((e.disabled and "Disabled" or "Enabled") .. " step " .. tostring(indexOf(e)))
+end
+
+local function deleteStep()
+    local e = view.selected
+    if not e or not canRestructure(e) then return end
+    local i = indexOf(e)
+    table.remove(view.macro.entries, i)
+    view.selected = nil
+    selectEntry(nil)
+    afterEdit("Deleted step " .. tostring(i))
+end
+
+local function moveStep(dir)
+    local e = view.selected
+    if not e then return end
+    local list = view.macro.entries
+    local i = indexOf(e)
+    local j = i + dir
+    if not list[j] then return end
+    if not canRestructure(e) or not canRestructure(list[j]) then return end
+    -- swap the actions but keep the time slots, so timing stays in order
+    list[i], list[j] = list[j], list[i]
+    list[i].t, list[j].t = list[j].t, list[i].t
+    selectEntry(e)
+    afterEdit("Moved step to " .. tostring(j))
+end
+
+local shiftBox
+
+local function shiftLater()
+    local e = view.selected
+    if not e or not canEditFields(e) then return end
+    local dx = tonumber(shiftBox and shiftBox.Text)
+    if not dx then say("Enter seconds to shift by (e.g. 1.5 or -0.5).", C.bad) return end
+    local list = view.macro.entries
+    for j = indexOf(e), #list do
+        if list[j].t then list[j].t = math.max(0, list[j].t + dx) end
+    end
+    refreshFieldTexts()
+    afterEdit(string.format("Shifted steps from %d on by %+.2fs", indexOf(e), dx))
+end
+
+function selectEntry(e)
+    view.selected = e
+    clearEditPanel()
+    if not e then
+        editTitle.Text = "Select a step to edit it."
+        editTitle.TextColor3 = C.dim
+        return
+    end
+
+    editTitle.Text = string.format("Step %d - %s%s", indexOf(e) or 0, describe(e), e.disabled and "  [DISABLED]" or "")
+    editTitle.TextColor3 = e.disabled and C.skip or C.text
+
+    for i, spec in ipairs(specsFor(e)) do
+        local y = (i - 1) * 22
+        label(fieldHolder, spec.name, UDim2.fromOffset(8, y), UDim2.fromOffset(80, 20), { TextColor3 = C.dim })
+        local box = make("TextBox", {
+            Position = UDim2.fromOffset(90, y), Size = UDim2.new(1, -98, 0, 20), BackgroundColor3 = C.row,
+            TextColor3 = C.text, Font = Enum.Font.Code, TextSize = 12, ClearTextOnFocus = false,
+            TextXAlignment = Enum.TextXAlignment.Left, BorderSizePixel = 0, Text = "",
+        }, fieldHolder)
+        corner(box, 3)
+        table.insert(fieldRows, { spec = spec, box = box })
+    end
+    refreshFieldTexts()
+
+    local function ab(text, x, w, cb)
+        local b = button(edit, text, UDim2.fromOffset(x, 154), UDim2.fromOffset(w, 24), cb)
+        table.insert(actionButtons, b)
+        return b
+    end
+    ab("Apply", 6, 70, applyFields)
+    ab(e.disabled and "Enable" or "Disable", 80, 76, toggleDisabled)
+    ab("Delete", 160, 70, deleteStep)
+    ab("Up", 234, 50, function() moveStep(-1) end)
+    ab("Down", 288, 56, function() moveStep(1) end)
+
+    local sl = label(edit, "Shift this + later steps by", UDim2.fromOffset(8, 182), UDim2.fromOffset(170, 20), { TextColor3 = C.dim })
+    table.insert(actionButtons, sl)
+    shiftBox = make("TextBox", {
+        Position = UDim2.fromOffset(182, 182), Size = UDim2.fromOffset(60, 20), BackgroundColor3 = C.row, Text = "0.5",
+        TextColor3 = C.text, Font = Enum.Font.Code, TextSize = 12, ClearTextOnFocus = false, BorderSizePixel = 0,
+    }, edit)
+    corner(shiftBox, 3)
+    table.insert(actionButtons, shiftBox)
+    local sb = button(edit, "s  Apply shift", UDim2.fromOffset(246, 182), UDim2.fromOffset(110, 20), shiftLater)
+    table.insert(actionButtons, sb)
+end
+
+---------------------------------------------------------------------
+-- Step list
+---------------------------------------------------------------------
+local rows = {}
+
+local function makeRow(i)
+    local b = make("TextButton", {
+        Size = UDim2.new(1, -8, 0, 20), BackgroundColor3 = C.row, BorderSizePixel = 0, AutoButtonColor = true,
+        Font = Enum.Font.Code, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.text,
+        Text = "", LayoutOrder = i, ClipsDescendants = true,
+    }, stepList)
+    b.MouseButton1Click:Connect(function()
+        local e = entries()[i]
+        if e then selectEntry(e) end
+    end)
+    return b
+end
+
+local function syncRows(pb)
+    local list = entries()
+    while #rows < #list do table.insert(rows, makeRow(#rows + 1)) end
+    while #rows > #list do rows[#rows]:Destroy() rows[#rows] = nil end
+
+    local live = pb.Playing and view.live and pb.Macro == view.macro
+    local idx = live and pb.Index or nil
+
+    for i, e in ipairs(list) do
+        local row = rows[i]
+        local icon, color = "  ", C.text
+        local res = pb.Results and pb.Results[e]
+
+        if e.disabled then
+            icon, color = "o ", C.skip
+        elseif idx and i == idx then
+            icon, color = ">>", C.cur
+        elseif res then
+            if res.reason == "skipped" then icon, color = "- ", C.skip
+            elseif res.ok then icon, color = "ok", C.ok
+            else icon, color = "XX", C.bad end
+        elseif idx and i < idx then
+            icon, color = "ok", C.ok
+        end
+
+        local eta = ""
+        if idx and i >= idx and e.t and pb.Timed and not e.disabled then
+            eta = string.format("  in %.1fs", math.max(0, e.t - pb.Elapsed))
+        end
+        local why = (res and not res.ok and res.reason) and ("  (" .. tostring(res.reason) .. ")") or ""
+
+        row.Text = string.format(" %s %02d [%6.1fs] %s%s%s", icon, i, e.t or 0, describe(e), eta, why)
+        row.TextColor3 = color
+        row.BackgroundColor3 = (e == view.selected) and C.sel or C.row
+    end
+end
+
+---------------------------------------------------------------------
+-- Backups list
+---------------------------------------------------------------------
+local function restoreBackup(item)
+    if not view.macro or not view.name then return end
+    if not readfile then return end
+
+    -- preserve both the on-disk version and any unsaved in-memory edits first
+    backupDiskVersion(view.name)
+    local okEnc, memJson = pcall(function() return HttpService:JSONEncode(view.macro) end)
+    if okEnc then writeBackupRaw(view.name, memJson) end
+
+    local okDec, data = pcall(function() return HttpService:JSONDecode(readfile(item.path)) end)
+    if not okDec or type(data) ~= "table" or type(data.entries) ~= "table" then
+        say("That backup is corrupt.", C.bad)
+        return
+    end
+
+    -- replace contents in place: a replay in progress keeps iterating the same table
+    for k in pairs(view.macro) do view.macro[k] = nil end
+    for k, v in pairs(data) do view.macro[k] = v end
+    view.selected = nil
+    selectEntry(nil)
+
+    if TD.SaveMacro(view.name, view.macro).Success then
+        view.dirty = false
+        say("Restored " .. item.label .. " (previous state backed up).", C.ok)
+    end
+end
+
+local function rebuildBackups()
+    for _, c in ipairs(backupList:GetChildren()) do
+        if c:IsA("TextButton") or c:IsA("TextLabel") then c:Destroy() end
+    end
+    if not view.name then
+        label(backupList, "  No macro file selected.", UDim2.new(), UDim2.new(1, 0, 0, 20))
+        return
+    end
+    local list = listBackups(view.name)
+    if #list == 0 then
+        label(backupList, "  No backups yet for '" .. view.name .. "'. One is created on every change.", UDim2.new(), UDim2.new(1, 0, 0, 20))
+        return
+    end
+    for i, item in ipairs(list) do
+        local steps = "?"
+        pcall(function()
+            steps = #HttpService:JSONDecode(readfile(item.path)).entries
+        end)
+        local b = make("TextButton", {
+            Size = UDim2.new(1, -8, 0, 22), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = i,
+            Font = Enum.Font.Code, TextSize = 12, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Left,
+            Text = string.format("  %s   (%s steps)   - click to restore", item.label, tostring(steps)),
+        }, backupList)
+        b.MouseButton1Click:Connect(function()
+            restoreBackup(item)
+            rebuildBackups()
+        end)
+    end
+end
+
+---------------------------------------------------------------------
+-- Buttons
+---------------------------------------------------------------------
+local function macroNames() return TD.ListMacros() end
+
+local function cycle(dir)
+    local pb = playback()
+    if pb.Playing then say("A macro is playing - showing the live macro.", C.cur) return end
+    local names = macroNames()
+    if #names == 0 then say("No saved macros.", C.bad) return end
+    local cur = 1
+    for i, n in ipairs(names) do if n == view.name then cur = i end end
+    cur = ((cur - 1 + dir) % #names) + 1
+    loadMacroByName(names[cur])
+    selectEntry(nil)
+    if view.showBackups then rebuildBackups() end
+end
+
+prevBtn.MouseButton1Click:Connect(function() cycle(-1) end)
+nextBtn.MouseButton1Click:Connect(function() cycle(1) end)
+
+autoBtn.MouseButton1Click:Connect(function()
+    view.autosave = not view.autosave
+end)
+
+pauseBtn.MouseButton1Click:Connect(function()
+    local pb = playback()
+    if not pb.Playing then return end
+    TD.PausePlayback(not pb.Paused)
+end)
+skipBtn.MouseButton1Click:Connect(function()
+    if playback().Playing then TD.SkipStep() say("Skipping current step.", C.cur) end
+end)
+stopBtn.MouseButton1Click:Connect(function() TD.Stop() end)
+saveBtn.MouseButton1Click:Connect(function() saveMacro(false) end)
+bkBtn.MouseButton1Click:Connect(function()
+    view.showBackups = not view.showBackups
+    stepList.Visible = not view.showBackups
+    backupList.Visible = view.showBackups
+    if view.showBackups then rebuildBackups() end
+end)
+
+---------------------------------------------------------------------
+-- Update loop
+---------------------------------------------------------------------
+local lastTick = 0
+
+local function update()
+    local pb = playback()
+
+    -- bind to the macro being replayed
+    if pb.Playing and pb.Macro and view.macro ~= pb.Macro then
+        if view.dirty and view.name then say("Unsaved edits to the previous copy were discarded.", C.cur) end
+        view.macro, view.name, view.live, view.selected, view.dirty = pb.Macro, pb.Name, true, nil, false
+        view.lastIndex = nil
+        selectEntry(nil)
+        if view.showBackups then rebuildBackups() end
+    elseif not view.macro then
+        local names = macroNames()
+        if names[1] then loadMacroByName(names[1]) end
+    end
+
+    local live = pb.Playing and view.live and pb.Macro == view.macro
+
+    -- header
+    local state = live and (pb.Paused and "PAUSED" or "PLAYING") or "idle"
+    statusLabel.Text = live
+        and string.format("%s  step %d/%d  |  %s  |  t=%.1fs", state, pb.Index, pb.Total, tostring(pb.Status), pb.Elapsed)
+        or string.format("%s  |  %s", state, view.macro and (#view.macro.entries .. " steps") or "no macro")
+
+    if live then
+        local e = view.macro.entries[pb.Index]
+        if e then
+            local eta = (pb.Timed and e.t) and string.format("  in %.1fs", math.max(0, e.t - pb.Elapsed)) or ""
+            nextLabel.Text = string.format("NEXT %d: %s%s%s", pb.Index, describe(e), eta, e.disabled and "  [disabled]" or "")
+        else
+            nextLabel.Text = "NEXT: (end of macro)"
+        end
+    else
+        nextLabel.Text = pb.Status and ("last status: " .. tostring(pb.Status)) or "NEXT: -"
+    end
+
+    macroLabel.Text = (view.name or "(unsaved macro)") .. (view.dirty and " *" or "") .. (live and "  [live]" or "")
+    autoBtn.Text = "Auto-save: " .. (view.autosave and "ON" or "OFF")
+    autoBtn.BackgroundColor3 = view.autosave and C.btnOn or C.btn
+    pauseBtn.Text = (live and pb.Paused) and "Resume" or "Pause"
+    pauseBtn.BackgroundColor3 = (live and pb.Paused) and C.btnOn or C.btn
+    bkBtn.Text = view.showBackups and "Back to steps" or "Backups"
+
+    if not view.showBackups then
+        syncRows(pb)
+        -- follow the replay
+        if live and view.lastIndex ~= pb.Index then
+            view.lastIndex = pb.Index
+            stepList.CanvasPosition = Vector2.new(0, math.max(0, (pb.Index - 4) * 21))
+        end
+    end
+end
+
+connect(RunService.Heartbeat, function()
+    gui.Enabled = env.ReplayUI == true
+    if not gui.Enabled then return end
+    local now = os.clock()
+    if now - lastTick < 0.1 then return end
+    lastTick = now
+    local ok, err = pcall(update)
+    if not ok then warn("[ReplayUI] " .. tostring(err)) end
+end)
+
+env.ReplayUIDestroy = function()
+    for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+    conns = {}
+    pcall(function() gui:Destroy() end)
+    env.ReplayUIDestroy = nil
+end
+
+selectEntry(nil)
+print("[ReplayUI] Loaded. Toggle with getgenv().ReplayUI = true/false")

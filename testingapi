@@ -1240,7 +1240,12 @@ local function autoRun()
             Mode = st.AutoPlay.Mode or "Timed",
             Vote = st.AutoPlay.Vote,
             After = st.AutoPlay.After,
+            Retries = st.AutoPlay.Retries,
+            CheckMoney = st.AutoPlay.CheckMoney,
+            RequireLoadout = st.AutoPlay.RequireLoadout,
             RepairTowers = st.AutoPlay.RepairTowers,
+            RepairOptions = st.AutoPlay.RepairOptions,
+            Delays = st.AutoPlay.Delays,
         })
     end
 end

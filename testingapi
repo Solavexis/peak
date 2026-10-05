@@ -8,21 +8,13 @@
 
     Setting TD_LOADER_URL is what lets the API re-queue itself with queue_on_teleport.
 
+    Auto-repair (re-place towers enemies destroy, never ones you sold):
+        TD.SetAutoRepair(true)                       -- toggle on/off any time in-game
+        TD.Play("run1", {RepairTowers = true})       -- or per replay
+    Rate limit delays:  TD.SetDelays({Place=0.4, Upgrade=0.35, Any=0.2})
+
     Every function returns {Success=bool, Data=..., Error=..., Code=...}
     unless noted (getters return the raw value or nil).
-
-    Quick examples
-    --------------
-    TD.GetData()                                   -- lobby/game: player data table
-    TD.SetEquipped("Slingshotter", true)           -- lobby
-    TD.JoinElevator("Hard", {Map="Baseplate", Mods={"Tix Loan"}, Players=1})
-    TD.Vote("Easy")                                -- game
-    TD.StartRecording("run1")  ...place/upgrade manually...  TD.StopRecording(true)
-    TD.Play("run1", {Mode="Timed"})                -- replay
-    TD.SetAutoRun({                                -- full lobby -> game loop
-        AutoJoin = {Elevator="Main", Map="Baseplate", Players=1},
-        AutoPlay = {Macro="run1", Mode="Timed"},
-    })
 ]]
 
 local env = (getgenv and getgenv()) or _G
@@ -45,7 +37,6 @@ local LocalPlayer       = Players.LocalPlayer
 local qot = queue_on_teleport
     or (syn and syn.queue_on_teleport)
     or (fluxus and fluxus.queue_on_teleport)
-    or (KRNL_LOADED and queue_on_teleport)
 
 local _firesignal       = firesignal
 local _firetouch        = firetouchinterest
@@ -126,6 +117,33 @@ local function call(name, method, ...)
 end
 
 ---------------------------------------------------------------------
+-- Rate limiting
+-- Minimum seconds between calls. Place/Upgrade are per-kind, Any is shared
+-- between them. Tune with TD.SetDelays({Place=0.5, Upgrade=0.4, Any=0.25}).
+---------------------------------------------------------------------
+M.Delays = { Place = 0.4, Upgrade = 0.35, Any = 0.2 }
+local lastCall = {}
+
+local function throttle(kind)
+    local t = math.max(
+        os.clock(),
+        (lastCall[kind] or 0) + (M.Delays[kind] or 0),
+        (lastCall.Any or 0) + (M.Delays.Any or 0)
+    )
+    -- reserve the slot immediately so concurrent callers (replay + repair) queue up
+    lastCall[kind], lastCall.Any = t, t
+    local wait = t - os.clock()
+    if wait > 0 then task.wait(wait) end
+end
+
+function M.SetDelays(delays)
+    for k, v in pairs(delays or {}) do
+        if type(v) == "number" and v >= 0 then M.Delays[k] = v end
+    end
+    return success(M.Delays)
+end
+
+---------------------------------------------------------------------
 -- Player helpers
 ---------------------------------------------------------------------
 local function getHRP()
@@ -166,8 +184,6 @@ function M.IsAntiAFKEnabled() return afkConn ~= nil end
 
 ---------------------------------------------------------------------
 -- Anti-jumpscare
--- Jumpscare mods clone ReplicatedStorage.FX.Jumpscare into the PlayerGui;
--- this watches for it and deletes it the moment it appears.
 ---------------------------------------------------------------------
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 local jumpscareConn
@@ -187,7 +203,6 @@ end
 function M.SetAntiJumpscare(enabled)
     if jumpscareConn then jumpscareConn:Disconnect() jumpscareConn = nil end
     if enabled then
-        -- catch anything already present, then anything added from here on
         for _, child in ipairs(PlayerGui:GetChildren()) do killJumpscare(child) end
         jumpscareConn = PlayerGui.ChildAdded:Connect(killJumpscare)
     end
@@ -203,8 +218,6 @@ local function contains(list, v)
     return false
 end
 
--- Owned/equipped towers are cached in memory AND on disk, so the in-game place
--- (where the GetData remote may not exist) can still verify ownership.
 local OWNED_FILE = M.Folder .. "/_owned.json"
 local ownedCache -- { Owned = {...}, Equipped = {...} }
 
@@ -225,13 +238,12 @@ function M.GetData()
     return r
 end
 
--- success({Owned = {...}, Equipped = {...}}); forceRefresh re-reads from the server if possible
 function M.GetOwnedTowers(forceRefresh)
     if ownedCache and not forceRefresh then return success(ownedCache) end
 
     local remotes = RS:FindFirstChild("Remotes")
     if remotes and remotes:FindFirstChild("GetData") then
-        M.GetData() -- updates ownedCache on success
+        M.GetData()
         if ownedCache then return success(ownedCache) end
     end
 
@@ -253,10 +265,9 @@ end
 ---------------------------------------------------------------------
 -- Lobby
 ---------------------------------------------------------------------
-
 function M.Interact(towerName)
     local r = call("InteractItem", "InvokeServer", towerName)
-    if r.Success then r.Data = r.Raw[1] end -- "Equipped" / "Unequipped" / ...
+    if r.Success then r.Data = r.Raw[1] end
     return r
 end
 
@@ -286,7 +297,6 @@ function M.GetMods()
     return out
 end
 
--- mods = array of names {"Tix Loan","Haunted"} or dict {["Tix Loan"]=true}
 function M.FinishSetup(map, mods, players)
     local e = requireLobby(); if e then return e end
     local maps = M.GetMaps()
@@ -325,7 +335,7 @@ function M.JoinElevator(mode, opts)
         task.wait(0.15)
         _firetouch(hrp, entrance, 1)
     else
-        hrp.CFrame = entrance.CFrame + Vector3.new(0, 3, 0) -- fallback: physically step on it
+        hrp.CFrame = entrance.CFrame + Vector3.new(0, 3, 0)
     end
 
     if opts.Map then
@@ -376,7 +386,6 @@ local function getTowerAttributes(tower)
     }
 end
 
--- accepts a tower Instance, or its id ("1" / 1)
 function M._ResolveTower(towerID)
     if typeof(towerID) == "Instance" then return towerID end
     local folder = workspace:FindFirstChild("Towers")
@@ -439,6 +448,13 @@ local function waitNewTower(before, timeout)
     until os.clock() - start > (timeout or 1)
 end
 
+local function isTowerValid(tower)
+    return typeof(tower) == "Instance"
+        and tower:IsDescendantOf(workspace)
+        and tower.Parent ~= nil
+        and tower.Parent.Name == "Towers"
+end
+
 ---------------------------------------------------------------------
 -- Game actions
 ---------------------------------------------------------------------
@@ -454,9 +470,9 @@ function M.Skip()    local e = requireGame(); if e then return e end return call
 function M.Pause()   local e = requireGame(); if e then return e end return call("Pause", "FireServer") end
 function M.Restart() local e = requireGame(); if e then return e end return call("Restart", "FireServer") end
 
--- returns success(towerInstance) once the tower shows up in workspace.Towers
 function M.PlaceTower(towerName, cframe)
     local e = requireGame(); if e then return e end
+    throttle("Place")
     local before = towerSet()
     local r = call("PlaceTower", "InvokeServer", towerName, cframe)
     if not r.Success then return r end
@@ -469,6 +485,8 @@ function M.UpgradeTower(towerID)
     local e = requireGame(); if e then return e end
     local tower = M._ResolveTower(towerID)
     if not tower then return makeError("Tower could not be found.", "TOWER_NOT_FOUND") end
+    throttle("Upgrade")
+    if not isTowerValid(tower) then return makeError("Tower no longer exists.", "TOWER_NOT_FOUND") end
     local before = getAttributeSafe(tower, "Level", "number")
     local r = call("PlaceTower", "InvokeServer", tower, tower:GetPivot(), true)
     if not r.Success then return r end
@@ -539,7 +557,7 @@ function M.DeleteMacro(name)
 end
 
 ---------------------------------------------------------------------
--- Loadout checking (does the macro's loadout match what's equipped?)
+-- Loadout checking
 ---------------------------------------------------------------------
 function M.GoToLobby()
     local ok, err = pcall(function()
@@ -549,9 +567,6 @@ function M.GoToLobby()
     return success(true)
 end
 
--- success({Needed = {name=true}, Missing = {...}, ExtraEquipped = {...}, Ok = bool})
--- Missing = towers the macro places that are either not owned or not currently equipped.
--- ExtraEquipped = towers you have equipped that the macro never places.
 function M.CheckLoadout(macro)
     if type(macro) ~= "table" or type(macro.entries) ~= "table" then
         return makeError("Invalid macro.", "MACRO_CORRUPT")
@@ -576,7 +591,6 @@ function M.CheckLoadout(macro)
     return success({ Needed = needed, Missing = missing, ExtraEquipped = extra, Ok = (#missing == 0) })
 end
 
--- lobby only: equips whatever the macro needs (that you own) and unequips whatever it doesn't use
 function M.FixLoadout(macro)
     local e = requireLobby(); if e then return e end
     local check = M.CheckLoadout(macro)
@@ -590,7 +604,7 @@ function M.FixLoadout(macro)
             local r = M.Equip(name)
             table.insert(r.Success and results.Equipped or results.CannotEquip, name)
         else
-            table.insert(results.CannotEquip, name) -- don't own it, can't fix this one
+            table.insert(results.CannotEquip, name)
         end
     end
     for _, name in ipairs(check.Data.ExtraEquipped) do
@@ -601,66 +615,207 @@ function M.FixLoadout(macro)
 end
 
 ---------------------------------------------------------------------
--- Recorder (hooks __namecall, ignores the API's own calls)
+-- Recorder (single implementation; hooks __namecall once per session)
 ---------------------------------------------------------------------
-local Recorder = { active = false, entries = {}, t0 = 0, name = nil, pending = 0, remotes = {} }
-local oldNamecall
+local Recorder = {
+    active = false, entries = {}, errors = {}, t0 = 0, name = nil,
+    pending = 0, remotes = {}, messageConnection = nil, seq = 0,
+}
+
+local function now() return os.clock() - Recorder.t0 end
+
+-- Replay/repair tracking. Recorded tower ids -> live instances, so towers can be
+-- re-placed when enemies destroy them (but not when the player sells them).
+local function weakKeys() return setmetatable({}, { __mode = "k" }) end
+local Track = {
+    idMap = {},              -- recorded id -> current tower Instance
+    info = {},               -- recorded id -> { entry, upgrades, upgradeCash, repairs, repairing, sold }
+    byInstance = weakKeys(), -- tower Instance -> recorded id
+    sold = weakKeys(),       -- tower Instance -> true when a sell remote was fired on it
+    repair = false,
+    conns = {},
+    cashLog = {},            -- recent cash increases, used to detect sells as a fallback
+}
+local function resetTrack()
+    Track.idMap, Track.info = {}, {}
+    Track.byInstance, Track.sold = weakKeys(), weakKeys()
+end
 
 local function push(e)
-    e.t = e.t or (os.clock() - Recorder.t0)
+    Recorder.seq += 1
+    e.seq = Recorder.seq
     table.insert(Recorder.entries, e)
     return e
 end
 
-local function installHook()
-    if oldNamecall then return true end
-    if not (_hookmeta and getnamecallmethod and setnamecallmethod and newcclosure) then return false end
+local function recordError(message)
+    if not Recorder.active then return end
+    table.insert(Recorder.errors, { t = now(), message = tostring(message) })
+end
 
-    oldNamecall = _hookmeta(game, "__namecall", newcclosure(function(self, ...)
-        local method = getnamecallmethod()
+local function towerSnapshot(tower)
+    if not isTowerValid(tower) then return nil end
+    return {
+        Level = getAttributeSafe(tower, "Level", "number"),
+        Name = getAttributeSafe(tower, "Name", "string"),
+        SellPrice = getAttributeSafe(tower, "SellPrice", "number"),
+        UpgradeName = getAttributeSafe(tower, "UpgradeName", "string"),
+    }
+end
 
-        if Recorder.active
-            and (method == "FireServer" or method == "InvokeServer")
-            and typeof(self) == "Instance"
-            and not internal[coroutine.running()]
-        then
-            local args = table.pack(...)
-            local R = Recorder.remotes
+local function towerChanged(a, b)
+    if not a or not b then return false end
+    return a.Level ~= b.Level or a.Name ~= b.Name
+        or a.SellPrice ~= b.SellPrice or a.UpgradeName ~= b.UpgradeName
+end
 
-            if self == R.PlaceTower and method == "InvokeServer" then
-                local first = args[1]
-                if typeof(first) == "string" then
-                    -- new placement: id is resolved after the server responds
-                    local before = towerSet()
-                    local entry = push({ type = "place", tower = first, cf = packCF(args[2]), cash = M.GetCash() })
-                    Recorder.pending += 1
-                    task.spawn(function()
-                        local t = waitNewTower(before, 2)
-                        if t then entry.id = t.Name else entry.failed = true end
-                        Recorder.pending -= 1
-                    end)
-                elseif typeof(first) == "Instance" and args[3] == true then
-                    push({ type = "upgrade", id = first.Name, cf = packCF(args[2]), cash = M.GetCash() })
-                end
-            elseif self == R.Ability and method == "InvokeServer" then
-                local first, extra = args[1], args[2]
-                if typeof(first) == "Instance" then
-                    local ty = typeof(extra)
-                    push({
-                        type = "ability", id = first.Name,
-                        arg = (ty == "string" or ty == "number" or ty == "boolean") and extra or nil,
-                    })
-                end
-            elseif self == R.Vote then
-                push({ type = "vote", difficulty = args[1] })
-            elseif self == R.Skip then
-                push({ type = "skip" })
+local function towerNameSet()
+    local set, folder = {}, workspace:FindFirstChild("Towers")
+    if folder then for _, t in ipairs(folder:GetChildren()) do set[t.Name] = true end end
+    return set
+end
+
+local function waitNewTowerByName(before, timeout)
+    local start = os.clock()
+    repeat
+        local folder = workspace:FindFirstChild("Towers")
+        if folder then
+            for _, t in ipairs(folder:GetChildren()) do
+                if not before[t.Name] then return t end
             end
         end
+        task.wait(0.05)
+    until os.clock() - start >= (timeout or 2)
+end
 
-        setnamecallmethod(method) -- restore, our code above may have clobbered it
-        return oldNamecall(self, ...)
+local function watchMessageRemote()
+    if Recorder.messageConnection then Recorder.messageConnection:Disconnect() Recorder.messageConnection = nil end
+    local remote = getRemote(M.IsLobby() and "LobbyMessage" or "GameMessage", 2)
+    if not remote or not remote:IsA("RemoteEvent") then return end
+
+    local keywords = { "error", "failed", "cannot", "can't", "not enough", "insufficient", "invalid", "maximum", "max level" }
+    Recorder.messageConnection = remote.OnClientEvent:Connect(function(...)
+        if not Recorder.active then return end
+        local args = table.pack(...)
+        for i = 1, args.n do
+            if type(args[i]) == "string" then
+                local msg = args[i]:lower()
+                for _, k in ipairs(keywords) do
+                    if msg:find(k, 1, true) then recordError(args[i]) break end
+                end
+            end
+        end
+    end)
+end
+
+local function stopMessageWatcher()
+    if Recorder.messageConnection then Recorder.messageConnection:Disconnect() Recorder.messageConnection = nil end
+end
+
+-- Called from inside the namecall hook. Everything is captured at CALL time
+-- (timestamp, cash) so replay timing is correct even though confirmation is async.
+local function onRemoteCall(self, method, ...)
+    local args = table.pack(...)
+
+    -- player sold a tower: any non-API remote with "sell" in its name that gets a tower
+    if Track.repair and not internal[coroutine.running()]
+        and typeof(args[1]) == "Instance"
+        and self.Name:lower():find("sell", 1, true)
+    then
+        Track.sold[args[1]] = true
+    end
+
+    if not Recorder.active or internal[coroutine.running()] then return end
+    local R = Recorder.remotes
+    local t, cash = now(), M.GetCash()
+
+    if self == R.PlaceTower and method == "InvokeServer" then
+        local first = args[1]
+        if typeof(first) == "string" then
+            if typeof(args[2]) ~= "CFrame" then
+                return recordError("Ignored placement of '" .. first .. "': invalid CFrame.")
+            end
+            local before = towerNameSet()
+            local entry = { type = "place", tower = first, cf = packCF(args[2]), cash = cash, t = t }
+            Recorder.pending += 1
+            task.spawn(function()
+                local tower = waitNewTowerByName(before, 2)
+                if tower and isTowerValid(tower) then
+                    entry.id = tower.Name
+                    entry.level = getAttributeSafe(tower, "Level", "number")
+                    push(entry)
+                else
+                    recordError("Placement of '" .. first .. "' did not create a tower.")
+                end
+                Recorder.pending -= 1
+            end)
+        elseif typeof(first) == "Instance" and args[3] == true then
+            local tower, cf = first, args[2]
+            if not isTowerValid(tower) then
+                return recordError("Ignored upgrade: tower no longer exists.")
+            end
+            local before = towerSnapshot(tower)
+            Recorder.pending += 1
+            task.spawn(function()
+                local start, after, changed = os.clock(), nil, false
+                repeat
+                    if not isTowerValid(tower) then break end
+                    after = towerSnapshot(tower)
+                    if towerChanged(before, after) then changed = true break end
+                    task.wait(0.05)
+                until os.clock() - start >= 1.5
+
+                if changed then
+                    push({ type = "upgrade", id = tower.Name, cf = packCF(cf), cash = cash, t = t,
+                           before = before, after = after })
+                else
+                    recordError("Ignored upgrade for tower '" .. tostring(tower.Name) .. "': no attribute changed.")
+                end
+                Recorder.pending -= 1
+            end)
+        end
+
+    elseif self == R.Ability and method == "InvokeServer" then
+        local first, extra = args[1], args[2]
+        if typeof(first) == "Instance" and isTowerValid(first) then
+            local ty = typeof(extra)
+            push({ type = "ability", id = first.Name, t = t,
+                   arg = (ty == "string" or ty == "number" or ty == "boolean") and extra or nil })
+        else
+            recordError("Ignored ability: tower does not exist.")
+        end
+
+    elseif self == R.Vote and method == "FireServer" then
+        local d = args[1]
+        if d == "Easy" or d == "Normal" or d == "Hard" then
+            push({ type = "vote", difficulty = d, t = t })
+        end
+
+    elseif self == R.Skip and method == "FireServer" then
+        push({ type = "skip", t = t })
+    end
+end
+
+-- The hook is installed once per executor session and dispatches to whichever
+-- handler is current, so reloading the script never stacks hooks.
+local HANDLER_KEY, HOOKED_KEY = "__TD_HOOK_HANDLER", "__TD_HOOKED"
+
+local function installHook()
+    env[HANDLER_KEY] = onRemoteCall
+    if env[HOOKED_KEY] then return true end
+    if not (_hookmeta and getnamecallmethod and setnamecallmethod and newcclosure) then return false end
+
+    local old
+    old = _hookmeta(game, "__namecall", newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        if (method == "FireServer" or method == "InvokeServer") and typeof(self) == "Instance" then
+            local handler = env[HANDLER_KEY]
+            if handler then pcall(handler, self, method, ...) end
+            setnamecallmethod(method) -- handler may have clobbered it
+        end
+        return old(self, ...)
     end))
+    env[HOOKED_KEY] = true
     return true
 end
 
@@ -673,8 +828,11 @@ function M.StartRecording(name)
         PlaceTower = getRemote("PlaceTower"), Ability = getRemote("Ability"),
         Vote = getRemote("Vote"), Skip = getRemote("Skip"),
     }
-    Recorder.entries, Recorder.name, Recorder.t0 = {}, name or ("macro_" .. os.time()), os.clock()
+    Recorder.entries, Recorder.errors, Recorder.pending, Recorder.seq = {}, {}, 0, 0
+    Recorder.name = name or ("macro_" .. os.time())
+    Recorder.t0 = os.clock()
     Recorder.active = true
+    watchMessageRemote()
     return success(Recorder.name)
 end
 
@@ -683,15 +841,23 @@ function M.IsRecording() return Recorder.active end
 function M.StopRecording(save)
     if not Recorder.active then return makeError("Not recording.", "NOT_RECORDING") end
     Recorder.active = false
+    stopMessageWatcher()
 
     local start = os.clock()
-    while Recorder.pending > 0 and os.clock() - start < 3 do task.wait(0.05) end
+    while Recorder.pending > 0 and os.clock() - start < 5 do task.wait(0.05) end
 
-    local entries = {}
-    for _, e in ipairs(Recorder.entries) do
-        if not e.failed and (e.type ~= "place" or e.id) then table.insert(entries, e) end
-    end
-    local macro = { version = 1, placeId = game.PlaceId, created = os.time(), entries = entries }
+    -- async confirmations push out of order; restore real action order
+    table.sort(Recorder.entries, function(a, b)
+        if a.t ~= b.t then return a.t < b.t end
+        return a.seq < b.seq
+    end)
+    for _, e in ipairs(Recorder.entries) do e.seq = nil end
+
+    local macro = {
+        version = 1, placeId = game.PlaceId, created = os.time(),
+        entries = Recorder.entries,
+    }
+    if #Recorder.errors > 0 then macro.errors = Recorder.errors end
 
     if save then
         local r = M.SaveMacro(Recorder.name, macro)
@@ -708,7 +874,130 @@ local Player = { token = nil }
 function M.IsPlaying() return Player.token ~= nil and not Player.token.stop end
 function M.Stop() if Player.token then Player.token.stop = true end end
 
--- returns ok, reason
+---------------------------------------------------------------------
+-- Auto-repair: re-place towers that were destroyed by enemies
+-- Skipped when the player sold the tower (sell remote seen, or a cash gain
+-- matching the tower's SellPrice right around the removal).
+---------------------------------------------------------------------
+M.RepairOptions = {
+    MaxRepairs = 5,    -- per tower, so a hopeless spot can't loop forever
+    Attempts = 20,     -- placement/upgrade retries per repair
+    SellWindow = 1.5,  -- seconds to wait for sell evidence after a tower disappears
+    CheckMoney = true, -- wait for the recorded cash before placing/upgrading
+}
+
+local function watchCash()
+    local ls = LocalPlayer:FindFirstChild("leaderstats")
+    local cash = ls and ls:FindFirstChild("Cash")
+    if not cash then return end
+    local last = cash.Value
+    table.insert(Track.conns, cash.Changed:Connect(function(v)
+        local delta = v - last
+        last = v
+        if delta > 0 then
+            table.insert(Track.cashLog, { t = os.clock(), delta = delta })
+            if #Track.cashLog > 40 then table.remove(Track.cashLog, 1) end
+        end
+    end))
+end
+
+local function wasSold(tower, removedAt)
+    if Track.sold[tower] then return true end
+    local sp = getAttributeSafe(tower, "SellPrice", "number")
+    if not sp or sp <= 0 then return false end
+    task.wait(M.RepairOptions.SellWindow)
+    if Track.sold[tower] then return true end
+    for _, c in ipairs(Track.cashLog) do
+        if math.abs(c.t - removedAt) <= M.RepairOptions.SellWindow + 0.5 and c.delta >= sp * 0.9 then
+            return true
+        end
+    end
+    return false
+end
+
+local function repairTower(recId, info)
+    local ro = M.RepairOptions
+    info.repairing = true
+    local e = info.entry
+    local newTower
+
+    for attempt = 1, ro.Attempts do
+        if not Track.repair or not M.IsGame() or info.sold then break end
+        if ro.CheckMoney and e.cash then M.WaitForCash(e.cash, 30) end
+        local r = M.PlaceTower(e.tower, unpackCF(e.cf))
+        if r.Success then newTower = r.Data break end
+        task.wait(math.min(0.5 * attempt, 3)) -- back off on failure (cash / rate limit)
+    end
+    if not newTower then info.repairing = false return end
+
+    Track.byInstance[newTower] = recId
+
+    -- restore upgrade level
+    local done, fails = 0, 0
+    while done < info.upgrades and fails < ro.Attempts * 2 do
+        if not Track.repair or not isTowerValid(newTower) then break end
+        local needed = info.upgradeCash[done + 1]
+        if ro.CheckMoney and needed then M.WaitForCash(needed, 30) end
+        if M.UpgradeTower(newTower).Success then
+            done += 1
+        else
+            fails += 1
+            task.wait(0.5)
+        end
+    end
+
+    -- only publish the new tower once it is fully restored, so the replay's own
+    -- upgrade steps never race with this loop
+    Track.idMap[recId] = newTower
+    info.repairs += 1
+    info.repairing = false
+
+    -- destroyed again while we were upgrading it
+    if Track.repair and not isTowerValid(newTower) and info.repairs < ro.MaxRepairs then
+        repairTower(recId, info)
+    end
+end
+
+local function onTowerRemoved(tower)
+    if not Track.repair then return end
+    local recId = Track.byInstance[tower]
+    local info = recId and Track.info[recId]
+    if not info or info.sold or info.repairing then return end
+    if info.repairs >= M.RepairOptions.MaxRepairs then return end
+    if Track.idMap[recId] ~= tower then return end -- stale instance
+
+    local removedAt = os.clock()
+    task.spawn(function()
+        if wasSold(tower, removedAt) then
+            info.sold = true -- player sold it: never re-place
+            return
+        end
+        repairTower(recId, info)
+    end)
+end
+
+-- toggle: TD.SetAutoRepair(true) / TD.SetAutoRepair(false). Also via Play opts RepairTowers=true.
+function M.SetAutoRepair(enabled, options)
+    for _, c in ipairs(Track.conns) do c:Disconnect() end
+    Track.conns = {}
+    Track.repair = false
+    if options then
+        for k, v in pairs(options) do M.RepairOptions[k] = v end
+    end
+    if not enabled then return success(false) end
+
+    local e = requireGame(); if e then return e end
+    local folder = workspace:WaitForChild("Towers", 10)
+    if not folder then return makeError("workspace.Towers not found.", "TOWERS_NOT_FOUND") end
+
+    Track.repair = true
+    installHook() -- gives exact sell detection; repair still works via cash fallback without it
+    table.insert(Track.conns, folder.ChildRemoved:Connect(onTowerRemoved))
+    watchCash()
+    return success(true)
+end
+function M.IsAutoRepairEnabled() return Track.repair end
+
 local function runStep(e, idMap, token, opts)
     local retries     = opts.Retries or 30
     local retryDelay  = opts.RetryDelay or 0.5
@@ -727,20 +1016,49 @@ local function runStep(e, idMap, token, opts)
         for _ = 1, retries do
             if token.stop then return false, "stopped" end
             local r = M.PlaceTower(e.tower, unpackCF(e.cf))
-            if r.Success then idMap[e.id] = r.Data return true end
+            if r.Success then
+                idMap[e.id] = r.Data
+                Track.byInstance[r.Data] = e.id
+                Track.info[e.id] = { entry = e, upgrades = 0, upgradeCash = {}, repairs = 0 }
+                return true
+            end
             task.wait(retryDelay)
         end
         return false, "placement failed"
 
     elseif e.type == "upgrade" then
-        local tower = idMap[e.id] or M._ResolveTower(e.id)
-        if not tower then return false, "tower missing" end
+        local info = Track.info[e.id]
+        local function current()
+            local t = idMap[e.id] or M._ResolveTower(e.id)
+            if t and isTowerValid(t) then return t end
+        end
+
+        local tower = current()
+        -- destroyed by enemies and being re-placed: wait for the repair instead of skipping
+        if not tower and Track.repair and info and not info.sold then
+            local start = os.clock()
+            while not tower and not info.sold and not token.stop
+                and os.clock() - start < (opts.RepairWait or 60) do
+                task.wait(0.25)
+                tower = current()
+            end
+        end
+        if not tower then return false, (info and info.sold) and "tower sold" or "tower missing" end
+
         if checkMoney and e.cash and not M.WaitForCash(e.cash, moneyWait) then
             return false, "insufficient funds"
         end
         for _ = 1, retries do
-            if token.stop or not tower.Parent then return false, "stopped" end
-            if M.UpgradeTower(tower).Success then return true end
+            if token.stop then return false, "stopped" end
+            tower = current() or tower
+            if not isTowerValid(tower) then return false, "tower missing" end
+            if M.UpgradeTower(tower).Success then
+                if info then
+                    info.upgrades += 1
+                    info.upgradeCash[info.upgrades] = e.cash
+                end
+                return true
+            end
             task.wait(retryDelay)
         end
         return false, "upgrade failed"
@@ -753,10 +1071,6 @@ local function runStep(e, idMap, token, opts)
     return false, "unknown step"
 end
 
--- opts: Mode="Timed"|"Fast", Retries, RetryDelay, CheckMoney, MoneyTimeout, MaxWait,
---       RequireLoadout (default true), Vote="Easy"|"Normal"|"Hard" (voted before the first step),
---       After="Repeat"|"Shutdown"|"Lobby" (what to do once the macro finishes),
---       OnStep(i, entry, ok, reason), OnDone(completed)
 function M.Play(nameOrMacro, opts)
     local e = requireGame(); if e then return e end
     opts = opts or {}
@@ -773,7 +1087,6 @@ function M.Play(nameOrMacro, opts)
         return makeError("Invalid macro.", "MACRO_CORRUPT")
     end
 
-    -- loadout check: cancel + fix in lobby instead of running with the wrong towers equipped
     if opts.RequireLoadout ~= false then
         local check = M.CheckLoadout(macro)
         if check.Success and not check.Data.Ok then
@@ -792,16 +1105,20 @@ function M.Play(nameOrMacro, opts)
 
     if opts.Vote then M.Vote(opts.Vote) task.wait(0.5) end
 
+    resetTrack()
+    if opts.RepairTowers ~= nil then M.SetAutoRepair(opts.RepairTowers, opts.RepairOptions) end
+    if opts.Delays then M.SetDelays(opts.Delays) end
+
     local token = { stop = false }
     Player.token = token
     local timed   = (opts.Mode or "Timed") == "Timed"
-    local maxWait = opts.MaxWait or 10 -- timing check: never stall on one step for longer than this
+    local maxWait = opts.MaxWait or 10
 
     task.spawn(function()
-        local idMap, start, completed = {}, os.clock(), true
+        local idMap, start, completed = Track.idMap, os.clock(), true
         for i, entry in ipairs(macro.entries) do
             if token.stop then completed = false break end
-            if timed then
+            if timed and entry.t then
                 local wait = entry.t - (os.clock() - start)
                 if wait > 0 then task.wait(math.min(wait, maxWait)) end
             end
@@ -843,7 +1160,6 @@ function saveState(st)
     pcall(writefile, STATE_FILE, HttpService:JSONEncode(st))
 end
 
--- cfg = { AutoJoin = {Elevator, Map, Mods, Players, SetupDelay}, AutoPlay = {Macro, Mode, Vote, After} }
 function M.SetAutoRun(cfg)
     local st = loadState()
     st.AutoJoin = cfg.AutoJoin
@@ -862,7 +1178,6 @@ function M.QueueOnTeleport(code)
     return success(true)
 end
 
--- re-queues this API so it survives the next teleport
 function M.QueueSelf()
     if not qot then return makeError("queue_on_teleport not supported.", "NO_QOT") end
     if not M.LoaderUrl then
@@ -880,10 +1195,12 @@ end
 ---------------------------------------------------------------------
 function M.Destroy()
     Recorder.active = false
+    stopMessageWatcher()
+    M.SetAutoRepair(false)
     M.Stop()
     M.SetAntiAFK(false)
     M.SetAntiJumpscare(false)
-    -- the namecall hook stays installed (harmless when inactive); it just passes through
+    env[HANDLER_KEY] = nil -- hook stays installed but becomes a pure pass-through
     if env.TDAPI == M then env.TDAPI = nil end
 end
 
@@ -898,7 +1215,7 @@ local function autoRun()
             if mr.Success then
                 local fix = M.FixLoadout(mr.Data)
                 if fix.Success then
-                    local msg = ("#" .. #fix.Data.Equipped .. " equipped, " .. #fix.Data.Unequipped .. " unequipped")
+                    local msg = #fix.Data.Equipped .. " equipped, " .. #fix.Data.Unequipped .. " unequipped"
                     if #fix.Data.CannotEquip > 0 then
                         msg = msg .. " - missing (not owned): " .. table.concat(fix.Data.CannotEquip, ", ")
                     end
@@ -923,6 +1240,7 @@ local function autoRun()
             Mode = st.AutoPlay.Mode or "Timed",
             Vote = st.AutoPlay.Vote,
             After = st.AutoPlay.After,
+            RepairTowers = st.AutoPlay.RepairTowers,
         })
     end
 end

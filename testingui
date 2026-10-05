@@ -1,19 +1,22 @@
 --[[
     Tower Defense UI (WindUI) - front-end for td_api.lua
-    Host BOTH files, put their raw URLs below, then run:
+    Host BOTH files (td_api.lua + td_ui.lua), put their raw URLs below, then run:
 
         loadstring(game:HttpGet("https://raw.githubusercontent.com/YOU/REPO/main/td_ui.lua"))()
 
-    This script loads the API itself, and re-queues ITSELF with queue_on_teleport,
+    This script loads the API itself and re-queues ITSELF with queue_on_teleport,
     so the UI + API + auto-run chain comes back after every teleport.
+
+    New: "Safety" tab -> auto-replace destroyed towers + place/upgrade delays.
 ]]
 
-local API_URL = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/testingapi"
-local UI_URL  = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/testingui"
+local API_URL  = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/testingapi"
+local UI_URL   = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/testingui"
 local WIND_URL = "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
 
 local env = (getgenv and getgenv()) or _G
 local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 
 ---------------------------------------------------------------------
@@ -31,6 +34,7 @@ env.TD_LOADER_URL = nil -- the UI handles re-queueing itself (avoids double load
 local TD = loadstring(game:HttpGet(API_URL))()
 local WindUI = loadstring(game:HttpGet(WIND_URL))()
 
+-- settings (defaults mirror the API's)
 local S = {
     elevator = "Main", map = nil, mods = {}, players = 1,
     tower = nil, towerId = nil, placeName = "Battler",
@@ -39,6 +43,13 @@ local S = {
     autoJoin = true, autoPlay = true,
     afk = true, jumpscare = true,
     checkMoney = true, requireLoadout = true, voteBeforePlay = false, after = "None",
+
+    -- safety
+    repair = true,
+    repairMax = TD.RepairOptions.MaxRepairs,
+    repairSellWindow = TD.RepairOptions.SellWindow,
+    repairCheckMoney = TD.RepairOptions.CheckMoney,
+    delays = { Place = TD.Delays.Place, Upgrade = TD.Delays.Upgrade, Any = TD.Delays.Any },
 }
 
 local function notify(title, content, icon)
@@ -76,6 +87,21 @@ local function queueUI()
     end
 end
 queueUI()
+
+-- snapshots of the safety settings, used for Play() and the saved auto-run config
+local function repairOptions()
+    return { MaxRepairs = S.repairMax, SellWindow = S.repairSellWindow, CheckMoney = S.repairCheckMoney }
+end
+local function delayOptions()
+    return { Place = S.delays.Place, Upgrade = S.delays.Upgrade, Any = S.delays.Any }
+end
+
+-- push current safety settings into the API right now
+local function applySafety()
+    TD.SetDelays(delayOptions())
+    for k, v in pairs(repairOptions()) do TD.RepairOptions[k] = v end
+end
+applySafety()
 
 ---------------------------------------------------------------------
 -- Window
@@ -136,9 +162,11 @@ task.spawn(function()
         local place = TD.IsLobby() and "Lobby" or (TD.IsGame() and "In-game" or "Unknown place")
         local cash = TD.GetCash()
         setDesc(statusPara, string.format(
-            "Place: %s (%d)\nCash: %s\nRecording: %s   Playing: %s",
+            "Place: %s (%d)\nCash: %s\nRecording: %s   Playing: %s\nAuto-replace: %s   Delays: place %.2fs / upgrade %.2fs",
             place, game.PlaceId, cash and ("$" .. cash) or "n/a",
-            tostring(TD.IsRecording()), tostring(TD.IsPlaying())
+            tostring(TD.IsRecording()), tostring(TD.IsPlaying()),
+            TD.IsAutoRepairEnabled() and "ON" or "off",
+            TD.Delays.Place, TD.Delays.Upgrade
         ))
         task.wait(0.5)
     end
@@ -292,7 +320,12 @@ Game:Button({ Title = "Skip wave", Callback = function() handle(TD.Skip(), "Skip
 Game:Button({ Title = "Pause / unpause", Callback = function() handle(TD.Pause()) end })
 Game:Button({ Title = "Restart", Callback = function() handle(TD.Restart(), "Restart sent") end })
 Game:Toggle({ Title = "Auto skip", Value = false, Callback = function(v) S.autoSkip = v end })
-Game:Toggle({ Title = "Auto upgrade all my towers", Value = false, Callback = function(v) S.autoUpgrade = v end })
+Game:Toggle({
+    Title = "Auto upgrade all my towers",
+    Desc = "Uses the upgrade delay from the Safety tab",
+    Value = false,
+    Callback = function(v) S.autoUpgrade = v end,
+})
 
 Game:Section({ Title = "Place tower" })
 Game:Input({ Title = "Tower name", Value = "Battler", Callback = function(v) S.placeName = v end })
@@ -366,7 +399,7 @@ task.spawn(function()
             if S.autoUpgrade then
                 for _, t in ipairs(TD.GetTowers(true)) do
                     if not alive() or not S.autoUpgrade then break end
-                    TD.UpgradeTower(t.Instance)
+                    TD.UpgradeTower(t.Instance) -- throttled by the API's delays
                 end
             end
         end
@@ -459,6 +492,7 @@ local function needMacro()
 end
 Macro:Button({
     Title = "Play",
+    Desc = "Uses the auto-replace + delay settings from the Safety tab",
     Callback = function()
         if not needMacro() then return end
         handle(TD.Play(S.macro, {
@@ -468,6 +502,9 @@ Macro:Button({
             CheckMoney = S.checkMoney,
             Vote = S.voteBeforePlay and S.vote or nil,
             After = S.after ~= "None" and S.after or nil,
+            RepairTowers = S.repair,
+            RepairOptions = repairOptions(),
+            Delays = delayOptions(),
             OnDone = function(completed) notify("Macro", completed and "Finished" or "Stopped", completed and "check" or "square") end,
         }), "Playing '" .. S.macro .. "'")
     end,
@@ -484,13 +521,581 @@ Macro:Button({
 })
 
 ---------------------------------------------------------------------
+-- SAFETY TAB  (auto-replace + delays)
+---------------------------------------------------------------------
+local Safety = Window:Tab({ Title = "Safety", Icon = "shield" })
+
+Safety:Section({ Title = "Auto-replace destroyed towers" })
+Safety:Paragraph({
+    Title = "How it works",
+    Desc = "If a tower placed by the macro disappears (killed by enemies), it is placed again at the same spot "
+        .. "and upgraded back to its old level. Towers YOU sell are never replaced: that is detected from the sell "
+        .. "remote, or from a cash gain matching the tower's sell price.\n"
+        .. "Only towers placed by a macro replay are tracked.",
+})
+Safety:Toggle({
+    Title = "Auto-replace destroyed towers",
+    Desc = "Applies instantly in-game, and to every Play / saved auto-run",
+    Value = true,
+    Callback = function(v)
+        S.repair = v
+        if TD.IsGame() then handle(TD.SetAutoRepair(v, repairOptions())) end
+    end,
+})
+Safety:Slider({
+    Title = "Max replacements per tower",
+    Desc = "Stops a tower that keeps dying from looping forever",
+    Step = 1,
+    Value = { Min = 1, Max = 20, Default = S.repairMax },
+    Callback = function(v) S.repairMax = v TD.RepairOptions.MaxRepairs = v end,
+})
+Safety:Slider({
+    Title = "Sell-detection window (s)",
+    Desc = "How long to look for sell evidence after a tower vanishes",
+    Step = 0.1,
+    Value = { Min = 0.5, Max = 5, Default = S.repairSellWindow },
+    Callback = function(v) S.repairSellWindow = v TD.RepairOptions.SellWindow = v end,
+})
+Safety:Toggle({
+    Title = "Wait for cash before replacing",
+    Value = S.repairCheckMoney,
+    Callback = function(v) S.repairCheckMoney = v TD.RepairOptions.CheckMoney = v end,
+})
+
+Safety:Section({ Title = "Rate-limit delays (seconds)" })
+Safety:Paragraph({
+    Title = "Why",
+    Desc = "The server rate-limits placing and upgrading. These are the minimum gaps between calls "
+        .. "(replay, replacements, auto-upgrade and manual buttons all share them). Raise them if you still get blocked.",
+})
+local function delaySlider(title, key, max)
+    Safety:Slider({
+        Title = title,
+        Step = 0.05,
+        Value = { Min = 0, Max = max, Default = S.delays[key] },
+        Callback = function(v)
+            S.delays[key] = v
+            TD.SetDelays({ [key] = v })
+        end,
+    })
+end
+delaySlider("Place delay", "Place", 3)
+delaySlider("Upgrade delay", "Upgrade", 3)
+delaySlider("Shared delay (any place/upgrade)", "Any", 2)
+Safety:Button({
+    Title = "Reset to defaults",
+    Callback = function()
+        S.delays = { Place = 0.4, Upgrade = 0.35, Any = 0.2 }
+        TD.SetDelays(S.delays)
+        notify("Delays", "Reset (move a slider to refresh its display)", "check")
+    end,
+})
+
+---------------------------------------------------------------------
+-- EXPORT TAB
+-- Writes DoomspireMacros/<macro name>.lua : a standalone auto-farm script with
+-- the macro embedded inside it (replays forever, like coolfarm).
+---------------------------------------------------------------------
+local EXPORT_FOLDER = "DoomspireMacros"
+S.exportStart, S.exportJoin, S.exportSel = "Normal", true, nil
+
+-- Lua literal serializer for the config block
+local function ser(v)
+    local t = type(v)
+    if t == "string" then return string.format("%q", v) end
+    if t == "number" or t == "boolean" then return tostring(v) end
+    if t == "table" then
+        local parts = {}
+        if #v > 0 or next(v) == nil then
+            for _, x in ipairs(v) do table.insert(parts, ser(x)) end
+        else
+            for k, x in pairs(v) do
+                table.insert(parts, "[" .. ser(tostring(k)) .. "] = " .. ser(x))
+            end
+        end
+        return "{ " .. table.concat(parts, ", ") .. " }"
+    end
+    return "nil"
+end
+
+local function safeName(name)
+    return (tostring(name):gsub("[^%w_%-]", "_"))
+end
+
+local function exportPath(name) return EXPORT_FOLDER .. "/" .. safeName(name) .. ".lua" end
+
+local function ensureExportFolder()
+    if isfolder and makefolder and not isfolder(EXPORT_FOLDER) then makefolder(EXPORT_FOLDER) end
+end
+
+local function listExports()
+    local out = {}
+    if not (listfiles and isfolder and isfolder(EXPORT_FOLDER)) then return out end
+    for _, p in ipairs(listfiles(EXPORT_FOLDER)) do
+        local n = p:match("([^/\\]+)%.lua$")
+        if n then table.insert(out, n) end
+    end
+    return out
+end
+
+-- body of the generated script (uses the config locals written above it)
+local SCRIPT_BODY = [==[
+local env = (getgenv and getgenv()) or _G
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
+local LocalPlayer = Players.LocalPlayer
+
+if not game:IsLoaded() then game.Loaded:Wait() end
+
+if env.TD_FARM_CLEANUP then pcall(env.TD_FARM_CLEANUP) end
+
+local TD
+local aliveState = true
+local connections = {}
+
+local function connect(signal, callback)
+    local c = signal:Connect(callback)
+    table.insert(connections, c)
+    return c
+end
+
+local function cleanup()
+    if not aliveState then return end
+    aliveState = false
+    for i = #connections, 1, -1 do
+        local c = connections[i]
+        if c then pcall(function() c:Disconnect() end) end
+        connections[i] = nil
+    end
+    if TD then pcall(TD.Stop) end
+end
+env.TD_FARM_CLEANUP = cleanup
+
+local token = {}
+env.TD_FARM_TOKEN = token
+local function alive() return aliveState and env.TD_FARM_TOKEN == token end
+
+---------------------------------------------------------------------
+-- Load API, store the embedded macro, apply settings
+---------------------------------------------------------------------
+env.TD_LOADER_URL = nil -- this script re-queues itself; avoid loading the API twice
+TD = loadstring(game:HttpGet(API_URL))()
+if not alive() then return end
+
+local okDecode, macroData = pcall(function() return HttpService:JSONDecode(MACRO_JSON) end)
+if not okDecode or type(macroData) ~= "table" then
+    warn("[Doomspire Farm] Embedded macro is corrupt: " .. tostring(macroData))
+    return
+end
+
+-- write it where the API expects macros, so loadout fixing across teleports works
+local saved = TD.SaveMacro(MACRO_NAME, macroData)
+if not saved.Success then
+    warn("[Doomspire Farm] Could not save macro: " .. tostring(saved.Error))
+end
+
+TD.SetAntiAFK(true)
+TD.SetDelays(DELAYS)
+
+if readfile and isfile and isfile(SCRIPT_PATH) then
+    TD.QueueOnTeleport(string.format("loadstring(readfile(%q))()", SCRIPT_PATH))
+end
+
+---------------------------------------------------------------------
+-- Lobby: wait for the API's loadout fix, then rejoin the elevator
+---------------------------------------------------------------------
+if TD.IsLobby() then
+    task.spawn(function()
+        local STATE_FILE = "TDMacros/_state.json"
+        local start = os.clock()
+        while alive() and os.clock() - start < 25 do
+            local pending = false
+            if isfile and readfile and isfile(STATE_FILE) then
+                pcall(function()
+                    pending = HttpService:JSONDecode(readfile(STATE_FILE)).PendingFix ~= nil
+                end)
+            end
+            if not pending then break end
+            task.wait(0.5)
+        end
+
+        if AUTO_JOIN and alive() then
+            task.wait(2)
+            local r = TD.JoinElevator(AUTO_JOIN.Elevator or "Main", {
+                Map = AUTO_JOIN.Map, Mods = AUTO_JOIN.Mods, Players = AUTO_JOIN.Players,
+            })
+            if not r.Success then warn("[Doomspire Farm] Join failed: " .. tostring(r.Error)) end
+        end
+    end)
+    print("[Doomspire Farm] Lobby: auto-join " .. (AUTO_JOIN and "on" or "off"))
+    return
+end
+
+if not TD.IsGame() then return end
+
+---------------------------------------------------------------------
+-- Loading
+---------------------------------------------------------------------
+local function waitUntilFullyLoaded()
+    if not alive() or not TD.IsGame() then return false end
+
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    if not alive() then return false end
+    if not char:WaitForChild("HumanoidRootPart", 15) then return false end
+
+    local hum = char:WaitForChild("Humanoid", 15)
+    if not hum then return false end
+    while alive() and hum.Health <= 0 do task.wait(0.2) end
+    if not alive() then return false end
+
+    local Events = ReplicatedStorage:WaitForChild("Events", 30)
+    if not Events then return false end
+    local GameEvents = Events:WaitForChild("Game", 30)
+    if not GameEvents then return false end
+    if not GameEvents:WaitForChild("StartGame", 30) then return false end
+    if not workspace:WaitForChild("Towers", 30) then return false end
+
+    local PlayerGui = LocalPlayer:WaitForChild("PlayerGui", 30)
+    if not PlayerGui then return false end
+    if not PlayerGui:WaitForChild("GameGUI", 30) then return false end
+
+    task.wait(1)
+    return alive()
+end
+
+local function startGameMode()
+    if not alive() then return end
+    if VOTE == "Start" then
+        ReplicatedStorage:WaitForChild("Events"):WaitForChild("Game"):WaitForChild("StartGame"):FireServer()
+        print("[Doomspire Farm] Fired StartGame remote.")
+    else
+        TD.Vote(VOTE)
+        print("[Doomspire Farm] Voted: " .. tostring(VOTE))
+    end
+end
+
+---------------------------------------------------------------------
+-- Round
+---------------------------------------------------------------------
+local farming = false
+local restarting = false
+
+local function startRound()
+    if farming or restarting or not alive() or not TD.IsGame() then return end
+    farming = true
+
+    if not waitUntilFullyLoaded() or not alive() or not TD.IsGame() then
+        farming = false
+        return
+    end
+
+    startGameMode()
+    task.wait(1)
+    if not alive() then farming = false return end
+
+    local playDone = false
+    local result = TD.Play(MACRO_NAME, {
+        Mode = MODE,
+        Retries = RETRIES,
+        CheckMoney = CHECK_MONEY,
+        RequireLoadout = REQUIRE_LOADOUT,
+        RepairTowers = REPAIR,
+        RepairOptions = REPAIR_OPTIONS,
+        Delays = DELAYS,
+        OnDone = function() playDone = true end,
+    })
+
+    if not result.Success then
+        warn("[Doomspire Farm] Play failed: " .. tostring(result.Error) .. " [" .. tostring(result.Code) .. "]")
+        TD.Notify("Auto-farm: " .. tostring(result.Error), Color3.new(1, 0, 0))
+        farming = false
+        return
+    end
+
+    while alive() and not playDone and TD.IsPlaying() do task.wait(0.5) end
+    farming = false
+end
+
+---------------------------------------------------------------------
+-- End screen detection + restart loop
+---------------------------------------------------------------------
+local Win, Lose
+local lastWinVisible, lastLoseVisible = false, false
+
+local function refreshEndScreen()
+    Win, Lose = nil, nil
+    local PlayerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    local GameGUI = PlayerGui and PlayerGui:FindFirstChild("GameGUI")
+    local EndScreen = GameGUI and GameGUI:FindFirstChild("EndScreen")
+    if not EndScreen then return end
+    Win = EndScreen:FindFirstChild("Win")
+    Lose = EndScreen:FindFirstChild("Lose")
+end
+
+local function endScreenShown()
+    refreshEndScreen()
+    return (Win and Win.Visible) or (Lose and Lose.Visible) or false
+end
+
+local function waitForRestartComplete()
+    local start = os.clock()
+    while alive() and os.clock() - start < 30 do
+        if not endScreenShown() then break end
+        task.wait(0.25)
+    end
+
+    start = os.clock()
+    while alive() and os.clock() - start < 15 do
+        local folder = workspace:FindFirstChild("Towers")
+        if not folder or #folder:GetChildren() == 0 then break end
+        task.wait(0.25)
+    end
+
+    task.wait(2)
+end
+
+local function doRestart(reason)
+    if restarting or not alive() then return end
+    restarting = true
+    print("[Doomspire Farm] Restart triggered by: " .. tostring(reason))
+
+    pcall(TD.Stop)
+
+    local t = os.clock()
+    while farming and alive() and os.clock() - t < 5 do task.wait(0.1) end
+
+    task.wait(2)
+    if not alive() then restarting = false return end
+    pcall(TD.Restart)
+
+    waitForRestartComplete()
+
+    lastWinVisible, lastLoseVisible = false, false
+    restarting = false
+
+    if alive() and TD.IsGame() then startRound() end
+end
+
+local lastCheck = 0
+local function checkWinLoss()
+    if not alive() or restarting then return end
+
+    local now = os.clock()
+    if now - lastCheck < 0.1 then return end
+    lastCheck = now
+
+    if not Win or not Win.Parent or not Lose or not Lose.Parent then refreshEndScreen() end
+    if not Win or not Lose then return end
+
+    local winVisible, loseVisible = Win.Visible, Lose.Visible
+
+    if winVisible and not lastWinVisible then
+        lastWinVisible, lastLoseVisible = winVisible, loseVisible
+        print("[Doomspire Farm] Win detected.")
+        task.spawn(doRestart, "WinScreen")
+        return
+    end
+
+    if loseVisible and not lastLoseVisible then
+        lastWinVisible, lastLoseVisible = winVisible, loseVisible
+        print("[Doomspire Farm] Lose detected.")
+        task.spawn(doRestart, "LoseScreen")
+        return
+    end
+
+    lastWinVisible, lastLoseVisible = winVisible, loseVisible
+end
+connect(RunService.PreRender, checkWinLoss)
+
+local function setupAwardWatcher()
+    local Events = ReplicatedStorage:WaitForChild("Events", 30)
+    if not Events then return end
+    local GameEvents = Events:WaitForChild("Game", 30)
+    if not GameEvents then return end
+    local AwardEvent = GameEvents:WaitForChild("Award", 30)
+    if not AwardEvent or not alive() then return end
+
+    connect(AwardEvent.OnClientEvent, function(awardId, awardName)
+        if restarting or not alive() then return end
+        print("[Doomspire Farm] Award event - id=" .. tostring(awardId) .. ", name=" .. tostring(awardName))
+        task.spawn(doRestart, "AwardEvent")
+    end)
+end
+
+connect(Players.PlayerRemoving, function(player)
+    if player == LocalPlayer then cleanup() end
+end)
+
+task.spawn(function()
+    if not waitUntilFullyLoaded() then return end
+    if not alive() or not TD.IsGame() then return end
+    refreshEndScreen()
+    setupAwardWatcher()
+    startRound()
+end)
+
+print("[Doomspire Farm] Running macro '" .. MACRO_NAME .. "' (start: " .. tostring(VOTE) .. ", auto-replace: " .. tostring(REPAIR) .. ")")
+]==]
+
+local function buildScript(name, macroJson, autoJoin)
+    local path = exportPath(name)
+    local cfg = {
+        "-- Doomspire Defense auto-farm, generated by TD Macro Hub",
+        "-- Macro '" .. safeName(name) .. "' is embedded below. Run it with:",
+        "--   loadstring(readfile(" .. string.format("%q", path) .. "))()",
+        "",
+        "local API_URL = " .. ser(API_URL),
+        "local SCRIPT_PATH = " .. ser(path),
+        "local MACRO_NAME = " .. ser(safeName(name)),
+        "local MACRO_JSON = " .. string.format("%q", macroJson),
+        "",
+        "local VOTE = " .. ser(S.exportStart),
+        "local MODE = " .. ser(S.mode),
+        "local RETRIES = " .. ser(S.retries),
+        "local CHECK_MONEY = " .. ser(S.checkMoney),
+        "local REQUIRE_LOADOUT = " .. ser(S.requireLoadout),
+        "local REPAIR = " .. ser(S.repair),
+        "local REPAIR_OPTIONS = " .. ser(repairOptions()),
+        "local DELAYS = " .. ser(delayOptions()),
+        "local AUTO_JOIN = " .. (autoJoin and ser(autoJoin) or "nil"),
+        "",
+    }
+    return table.concat(cfg, "\n") .. "\n" .. SCRIPT_BODY
+end
+
+local Export = Window:Tab({ Title = "Export", Icon = "file-code" })
+Export:Paragraph({
+    Title = "Make a standalone farm script",
+    Desc = "Pick a macro in the Macros tab, then press Export. This writes DoomspireMacros/<macro name>.lua "
+        .. "with the macro embedded inside it. The script replays it over and over (restart on win/lose), "
+        .. "re-queues itself after teleports, and uses your current Safety settings (auto-replace + delays), "
+        .. "playback mode and loadout/money options.",
+})
+local exportInfo = Export:Paragraph({ Title = "Last export", Desc = "Nothing exported yet." })
+
+Export:Dropdown({
+    Title = "Start the round with",
+    Desc = "Vote a difficulty, or fire the StartGame remote",
+    Values = { "Easy", "Normal", "Hard", "Start" },
+    Value = "Normal",
+    Callback = function(v) S.exportStart = v end,
+})
+Export:Toggle({
+    Title = "Include auto-join (lobby)",
+    Desc = "Uses the elevator / map / mods / players from the Lobby tab",
+    Value = true,
+    Callback = function(v) S.exportJoin = v end,
+})
+
+local exportDD
+local function refreshExports()
+    if exportDD then refresh(exportDD, orNone(listExports())) end
+end
+
+local function runCommand(name)
+    return string.format("loadstring(readfile(%q))()", exportPath(name))
+end
+
+Export:Button({
+    Title = "Export script",
+    Desc = "Writes DoomspireMacros/<macro name>.lua",
+    Callback = function()
+        if not (writefile and readfile) then notify("Unsupported", "Executor has no writefile/readfile.", "x") return end
+        if not S.macro or S.macro == "(none)" then notify("Pick a macro", "Choose one in the Macros tab.", "x") return end
+
+        local r = handle(TD.LoadMacro(S.macro))
+        if not r or not r.Success then return end
+
+        local autoJoin
+        if S.exportJoin then
+            if not S.map or S.map == "(none)" then
+                notify("Pick a map", "Choose a map in the Lobby tab, or turn auto-join off.", "x")
+                return
+            end
+            autoJoin = { Elevator = S.elevator, Map = S.map, Mods = cleanMods(), Players = S.players }
+        end
+
+        local okEnc, json = pcall(function() return HttpService:JSONEncode(r.Data) end)
+        if not okEnc then notify("Error", "Could not encode macro.", "x") return end
+
+        ensureExportFolder()
+        local path = exportPath(S.macro)
+        local okW, err = pcall(writefile, path, buildScript(S.macro, json, autoJoin))
+        if not okW then notify("Write failed", err, "x") return end
+
+        setDesc(exportInfo, "Saved: " .. path .. "\nRun: " .. runCommand(S.macro))
+        notify("Exported", path, "check")
+        refreshExports()
+    end,
+})
+
+exportDD = Export:Dropdown({
+    Title = "Exported scripts",
+    Values = orNone(listExports()),
+    Value = listExports()[1] or "(none)",
+    Callback = function(v) S.exportSel = v end,
+})
+S.exportSel = listExports()[1]
+Export:Button({ Title = "Refresh list", Callback = refreshExports })
+
+local function needExport()
+    if not S.exportSel or S.exportSel == "(none)" then notify("Pick a script", "Export one first.", "x") return false end
+    return true
+end
+Export:Button({
+    Title = "Copy run command",
+    Callback = function()
+        if not needExport() then return end
+        local clip = setclipboard or toclipboard or (syn and syn.write_clipboard)
+        if not clip then
+            setDesc(exportInfo, runCommand(S.exportSel))
+            notify("No clipboard", "Command shown in 'Last export'.", "info")
+            return
+        end
+        clip(runCommand(S.exportSel))
+        notify("Copied", runCommand(S.exportSel), "check")
+    end,
+})
+Export:Button({
+    Title = "Run selected script now",
+    Desc = "Executes it on this client (in the lobby it auto-joins if enabled)",
+    Callback = function()
+        if not needExport() then return end
+        local path = exportPath(S.exportSel)
+        if not (isfile and readfile and isfile(path)) then notify("Missing", path, "x") return end
+        local fn, err = loadstring(readfile(path))
+        if not fn then notify("Script error", err, "x") return end
+        task.spawn(fn)
+        notify("Running", S.exportSel, "check")
+    end,
+})
+Export:Button({
+    Title = "Delete selected script",
+    Callback = function()
+        if not needExport() then return end
+        local path = exportPath(S.exportSel)
+        if delfile and isfile and isfile(path) then
+            delfile(path)
+            S.exportSel = nil
+            refreshExports()
+            notify("Deleted", path, "check")
+        else
+            notify("Missing", path, "x")
+        end
+    end,
+})
+
+---------------------------------------------------------------------
 -- AUTO-RUN TAB
 ---------------------------------------------------------------------
 local Auto = Window:Tab({ Title = "Auto-run", Icon = "repeat" })
 Auto:Paragraph({
     Title = "How it works",
     Desc = "Uses the Elevator/Map/Mods/Players you chose in the Lobby tab and the macro chosen in Macros.\n"
-        .. "After every teleport the UI is re-queued, joins the elevator in the lobby, and plays the macro in-game.\n"
+        .. "After every teleport the UI is re-queued, joins the elevator in the lobby, and plays the macro in-game "
+        .. "(with your auto-replace and delay settings from the Safety tab).\n"
         .. "If the macro's towers aren't equipped, playback cancels itself, teleports to the lobby, fixes the loadout automatically, then resumes.",
 })
 Auto:Toggle({ Title = "Auto join elevator (lobby)", Value = true, Callback = function(v) S.autoJoin = v end })
@@ -514,6 +1119,12 @@ Auto:Button({
                 Macro = S.macro, Mode = S.mode,
                 Vote = S.voteBeforePlay and S.vote or nil,
                 After = S.after ~= "None" and S.after or nil,
+                Retries = S.retries,
+                CheckMoney = S.checkMoney,
+                RequireLoadout = S.requireLoadout,
+                RepairTowers = S.repair,
+                RepairOptions = repairOptions(),
+                Delays = delayOptions(),
             }
         end
         handle(TD.SetAutoRun(cfg), "Auto-run saved")

@@ -1,0 +1,2 @@
+queue_on_teleport(loadstring(game:HttpGet("https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/coolidk"))())
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Ceepizz/rya/refs/heads/main/AutoProgress.lua"))()

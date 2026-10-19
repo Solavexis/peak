@@ -3,6 +3,15 @@
 local PLAYERS_SERVICE = game:GetService("Players")
 local LocalPlayer = PLAYERS_SERVICE.LocalPlayer
 
+if getgenv then
+    if getgenv().TX_SCRIPT_BOND_FARM_RUNNING then
+        warn("[TX Script] Duplicate execution detected — aborting this instance.")
+        return
+    end
+    getgenv().TX_SCRIPT_BOND_FARM_RUNNING = true
+    print("[TX Script] Singleton flag set — this is the only running instance.")
+end
+
 if not game:IsLoaded() then
     game.Loaded:Wait()
 end
@@ -26,6 +35,7 @@ end
 local sharedRoot = waitForPath(RS, {"Shared", "Universe", "ECS"})
 if not sharedRoot then
     warn("[TX Script] Failed to load ReplicatedStorage.Shared.Universe.ECS within 30s — aborting.")
+    if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end
     return
 end
 print("[TX Script] Shared.Universe.ECS path loaded.")
@@ -33,6 +43,7 @@ print("[TX Script] Shared.Universe.ECS path loaded.")
 local networkRoot = waitForPath(RS, {"Shared", "Universe", "Network", "RemoteEvent"})
 if not networkRoot then
     warn("[TX Script] Failed to load ReplicatedStorage.Shared.Universe.Network.RemoteEvent within 30s — aborting.")
+    if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end
     return
 end
 print("[TX Script] Shared.Universe.Network.RemoteEvent path loaded.")
@@ -40,34 +51,35 @@ print("[TX Script] Shared.Universe.Network.RemoteEvent path loaded.")
 local remotesRoot = waitForPath(RS, {"Remotes"})
 if not remotesRoot then
     warn("[TX Script] Failed to load ReplicatedStorage.Remotes within 30s — aborting.")
+    if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end
     return
 end
 
 local world, comps, replicator, Remotes, PlayerData
 local ok1, err1 = pcall(function() world = require(RS.Shared.Universe.ECS.world) end)
-if not ok1 then warn("[TX Script] require(world) failed: " .. tostring(err1)) return end
+if not ok1 then warn("[TX Script] require(world) failed: " .. tostring(err1)) if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end return end
 local ok2, err2 = pcall(function() comps = require(RS.Shared.Universe.ECS.components) end)
-if not ok2 then warn("[TX Script] require(comps) failed: " .. tostring(err2)) return end
+if not ok2 then warn("[TX Script] require(comps) failed: " .. tostring(err2)) if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end return end
 local ok3, err3 = pcall(function() replicator = require(RS.Client.Universe.Replication.clientReplicator) end)
-if not ok3 then warn("[TX Script] require(replicator) failed: " .. tostring(err3)) return end
+if not ok3 then warn("[TX Script] require(replicator) failed: " .. tostring(err3)) if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end return end
 local ok4, err4 = pcall(function() Remotes = require(RS.Shared.Universe.Remotes) end)
-if not ok4 then warn("[TX Script] require(Remotes) failed: " .. tostring(err4)) return end
+if not ok4 then warn("[TX Script] require(Remotes) failed: " .. tostring(err4)) if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end return end
 local ok5, err5 = pcall(function() PlayerData = require(RS.Client.Universe.PlayerDataController) end)
-if not ok5 then warn("[TX Script] require(PlayerData) failed: " .. tostring(err5)) return end
+if not ok5 then warn("[TX Script] require(PlayerData) failed: " .. tostring(err5)) if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end return end
 print("[TX Script] All modules required successfully.")
 
-local Event       = networkRoot:WaitForChild("Actionable", 30)
-if not Event then warn("[TX Script] Actionable not found within 30s — aborting.") return end
+local Event = networkRoot:WaitForChild("Actionable", 30)
+if not Event then warn("[TX Script] Actionable not found within 30s — aborting.") if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end return end
 local EndDecision = remotesRoot:WaitForChild("EndDecision", 30)
-if not EndDecision then warn("[TX Script] EndDecision not found within 30s — aborting.") return end
+if not EndDecision then warn("[TX Script] EndDecision not found within 30s — aborting.") if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end return end
 print("[TX Script] All remotes resolved.")
 
-local SCRIPT_URL             = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/peakfarming"
-local SCRIPT_SIGNATURE       = "--Open source by TX Script"
-local REQUIRED_EMPTY_SCANS   = 3
-local SCAN_INTERVAL          = 1
-local ENDDECISION_BUDGET     = 2000
-local ENDDECISION_BURST      = 20
+local SCRIPT_URL = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/peakfarming"
+local SCRIPT_SIGNATURE = "--Open source by TX Script"
+local REQUIRED_EMPTY_SCANS = 3
+local SCAN_INTERVAL = 1
+local ENDDECISION_BUDGET = 2000
+local ENDDECISION_BURST = 20
 
 local queue_on_teleport = queue_on_teleport or function() end
 
@@ -88,23 +100,25 @@ local function fetchScriptSource()
     return nil
 end
 
+local queueRegistered = false
 local function registerQueue()
+    if queueRegistered then
+        print("[TX Script] queue_on_teleport already registered this run — skipping.")
+        return true
+    end
     local src = fetchScriptSource()
     if not src then
         warn("[TX Script] Could not fetch script source — queue_on_teleport NOT registered.")
         return false
     end
-
-    -- Positive check: source must START with the expected signature.
-    -- (Old negative check matched the string "404: Not Found" inside the script itself.)
     if src:sub(1, #SCRIPT_SIGNATURE) ~= SCRIPT_SIGNATURE then
         warn(("[TX Script] Fetched source has unexpected start (got: %q) — NOT registering."):format(
             src:sub(1, 60)))
         return false
     end
-
     pcall(function() queue_on_teleport(src) end)
-    print("[TX Script] queue_on_teleport registered (" .. #src .. " bytes)")
+    queueRegistered = true
+    print("[TX Script] queue_on_teleport registered (" .. #src .. " bytes) — registered ONCE this run.")
     return true
 end
 
@@ -127,6 +141,27 @@ end
 local function charAlive()
     local h = getHumanoid()
     return h and h.Health > 0 and LocalPlayer.Character and LocalPlayer.Character.Parent ~= nil
+end
+
+local function tryResetCharacterRemote()
+    for _, name in ipairs({"ResetCharacter", "Respawn", "Reset", "LoadCharacter"}) do
+        local r = RS:FindFirstChild(name)
+        if not r then
+            local remotes = RS:FindFirstChild("Remotes")
+            if remotes then r = remotes:FindFirstChild(name) end
+        end
+        if not r and RS.Shared and RS.Shared.Universe and RS.Shared.Universe.Network and RS.Shared.Universe.Network.RemoteEvent then
+            r = RS.Shared.Universe.Network.RemoteEvent:FindFirstChild(name)
+        end
+        if r and r:IsA("RemoteEvent") then
+            local ok = pcall(function() r:FireServer() end)
+            if ok then return true end
+        elseif r and r:IsA("RemoteFunction") then
+            local ok = pcall(function() r:InvokeServer() end)
+            if ok then return true end
+        end
+    end
+    return false
 end
 
 local function tryKillHumanoid()
@@ -170,35 +205,14 @@ local function tryRespawnService()
     return false
 end
 
-local function tryResetCharacterRemote()
-    for _, name in ipairs({"ResetCharacter", "Respawn", "Reset", "LoadCharacter"}) do
-        local r = RS:FindFirstChild(name)
-        if not r then
-            local remotes = RS:FindFirstChild("Remotes")
-            if remotes then r = remotes:FindFirstChild(name) end
-        end
-        if not r and RS.Shared and RS.Shared.Universe and RS.Shared.Universe.Network and RS.Shared.Universe.Network.RemoteEvent then
-            r = RS.Shared.Universe.Network.RemoteEvent:FindFirstChild(name)
-        end
-        if r and r:IsA("RemoteEvent") then
-            local ok = pcall(function() r:FireServer() end)
-            if ok then return true end
-        elseif r and r:IsA("RemoteFunction") then
-            local ok = pcall(function() r:InvokeServer() end)
-            if ok then return true end
-        end
-    end
-    return false
-end
-
 local function tryKillOnce()
     local methods = {
+        {name = "ResetRemotes",  fn = tryResetCharacterRemote},
         {name = "KillHumanoid",  fn = tryKillHumanoid},
         {name = "BreakJoints",   fn = tryBreakJoints},
         {name = "FallIntoVoid",  fn = tryFallIntoVoid},
         {name = "LoadCharacter", fn = tryLoadCharacter},
         {name = "RespawnSvc",    fn = tryRespawnService},
-        {name = "ResetRemotes",  fn = tryResetCharacterRemote},
     }
     for _, m in ipairs(methods) do
         local ok, result = pcall(m.fn)
@@ -261,8 +275,6 @@ local function spamEndDecision()
 end
 
 local function triggerReset()
-    print("[TX Script] Re-registering queue_on_teleport before reset...")
-    registerQueue()
     print("[TX Script] Trying kill methods (one pass)...")
     local killedBy = tryKillOnce()
     if killedBy then
@@ -272,6 +284,10 @@ local function triggerReset()
     end
     spamEndDecision()
     print("[TX Script] Run complete — awaiting teleport reload.")
+    if getgenv then
+        getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false
+        print("[TX Script] Singleton flag cleared for next run.")
+    end
 end
 
 task.spawn(function()

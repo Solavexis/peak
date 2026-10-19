@@ -1,7 +1,6 @@
 --Open source by TX Script
 
 local PLAYERS_SERVICE = game:GetService("Players")
-local LocalPlayer = PLAYERS_SERVICE.LocalPlayer
 
 if getgenv then
     if getgenv().TX_SCRIPT_BOND_FARM_RUNNING then
@@ -124,7 +123,13 @@ end
 
 registerQueue()
 
+local function getLocalPlayer()
+    return PLAYERS_SERVICE.LocalPlayer
+end
+
 local function getLocalChar()
+    local lp = getLocalPlayer()
+    if not lp then return nil end
     local ok, char = pcall(function()
         return world:get_resource(comps.ClientStateResource).localCharacter
     end)
@@ -132,15 +137,29 @@ local function getLocalChar()
     return nil
 end
 
+local function getCharacter()
+    local lp = getLocalPlayer()
+    if not lp then return nil end
+    return lp.Character
+end
+
 local function getHumanoid()
-    local c = LocalPlayer.Character
+    local c = getCharacter()
     if not c then return nil end
-    return c:FindFirstChildOfClass("Humanoid") or c:FindFirstChild("Humanoid")
+    local h = c:FindFirstChildOfClass("Humanoid")
+    if h then return h end
+    return c:FindFirstChild("Humanoid")
 end
 
 local function charAlive()
-    local h = getHumanoid()
-    return h and h.Health > 0 and LocalPlayer.Character and LocalPlayer.Character.Parent ~= nil
+    local lp = getLocalPlayer()
+    if not lp then return false end
+    local c = lp.Character
+    if not c then return false end
+    if c.Parent == nil then return false end
+    local h = c:FindFirstChildOfClass("Humanoid") or c:FindFirstChild("Humanoid")
+    if not h then return false end
+    return h.Health > 0
 end
 
 local function tryResetCharacterRemote()
@@ -173,7 +192,7 @@ local function tryKillHumanoid()
 end
 
 local function tryBreakJoints()
-    local c = LocalPlayer.Character
+    local c = getCharacter()
     if not c then return false end
     pcall(function() c:BreakJoints() end)
     pcall(function()
@@ -187,15 +206,18 @@ local function tryBreakJoints()
 end
 
 local function tryFallIntoVoid()
-    local c = LocalPlayer.Character
-    local hrp = c and c:FindFirstChild("HumanoidRootPart")
+    local c = getCharacter()
+    if not c then return false end
+    local hrp = c:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
     pcall(function() hrp.CFrame = CFrame.new(0, -500000, 0) end)
     return true
 end
 
 local function tryLoadCharacter()
-    return pcall(function() LocalPlayer:LoadCharacter() end)
+    local lp = getLocalPlayer()
+    if not lp then return false end
+    return pcall(function() lp:LoadCharacter() end)
 end
 
 local function tryRespawnService()
@@ -244,7 +266,8 @@ local function spamEndDecision()
             print("[TX Script] EndDecision remote destroyed — stopping spam.")
             break
         end
-        if not LocalPlayer or not LocalPlayer.Parent then
+        local lp = getLocalPlayer()
+        if not lp or not lp.Parent then
             print("[TX Script] LocalPlayer gone — stopping spam.")
             break
         end

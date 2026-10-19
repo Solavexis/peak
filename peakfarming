@@ -14,22 +14,44 @@ local LocalPlayer = Players.LocalPlayer
 local SCRIPT_URL             = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/peakfarming"
 local REQUIRED_EMPTY_SCANS   = 3
 local SCAN_INTERVAL          = 1
-local ENDDECISION_BUDGET     = 2000    -- total fires before forced stop
-local ENDDECISION_BURST      = 20      -- fires per frame before yielding
--- ==================
+local ENDDECISION_BUDGET     = 2000
+local ENDDECISION_BURST      = 20
 
 local queue_on_teleport = queue_on_teleport or function() end
-local httpget           = http_get or httpget or (game and game.HttpGet) or function() return "" end
 
-pcall(function()
-    local src = httpget(SCRIPT_URL)
-    if src and src ~= "" and #src > 50 then
-        queue_on_teleport(src)
-        print("[TX Script] queue_on_teleport registered (" .. #src .. " bytes)")
-    else
-        warn("[TX Script] Failed to fetch script source for queue_on_teleport")
+local function fetchScriptSource()
+    local candidates = {
+        function() return http_get and http_get(SCRIPT_URL) end,
+        function() return httpget and httpget(SCRIPT_URL) end,
+        function() return game:HttpGet(SCRIPT_URL) end,
+        function() return syn and syn.request and syn.request({Url=SCRIPT_URL}).Body end,
+        function() return request and request({Url=SCRIPT_URL}).Body end,
+    }
+    for _, fn in ipairs(candidates) do
+        local ok, result = pcall(fn)
+        if ok and type(result) == "string" and #result > 50 then
+            return result
+        end
     end
-end)
+    return nil
+end
+
+local function registerQueue()
+    local src = fetchScriptSource()
+    if not src then
+        warn("[TX Script] Could not fetch script source — queue_on_teleport NOT registered.")
+        return false
+    end
+    if src:find("404: Not Found", 1, true) or src:find("400: Invalid request", 1, true) then
+        warn("[TX Script] GitHub returned an error page — queue_on_teleport NOT registered.")
+        return false
+    end
+    pcall(function() queue_on_teleport(src) end)
+    print("[TX Script] queue_on_teleport registered (" .. #src .. " bytes)")
+    return true
+end
+
+registerQueue()
 
 local function getLocalChar()
     local ok, char = pcall(function()
@@ -193,6 +215,9 @@ local function spamEndDecision()
 end
 
 local function triggerReset()
+    print("[TX Script] Re-registering queue_on_teleport before reset...")
+    registerQueue()
+
     print("[TX Script] Trying kill methods (one pass)...")
     local killedBy = tryKillOnce()
 

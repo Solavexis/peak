@@ -3,7 +3,6 @@
 local PLAYERS_SERVICE = game:GetService("Players")
 local LocalPlayer = PLAYERS_SERVICE.LocalPlayer
 
--- Wait for the game to fully load before touching anything
 if not game:IsLoaded() then
     game.Loaded:Wait()
 end
@@ -11,7 +10,6 @@ print("[TX Script] game:IsLoaded() = true")
 
 local RS = game:GetService("ReplicatedStorage")
 
--- Recursively WaitForChild with a 30s total timeout
 local function waitForPath(parent, names, totalTimeout)
     totalTimeout = totalTimeout or 30
     local deadline = os.clock() + totalTimeout
@@ -25,7 +23,6 @@ local function waitForPath(parent, names, totalTimeout)
     return current
 end
 
--- Wait for the Shared.Universe.ECS path before requiring modules
 local sharedRoot = waitForPath(RS, {"Shared", "Universe", "ECS"})
 if not sharedRoot then
     warn("[TX Script] Failed to load ReplicatedStorage.Shared.Universe.ECS within 30s — aborting.")
@@ -33,7 +30,6 @@ if not sharedRoot then
 end
 print("[TX Script] Shared.Universe.ECS path loaded.")
 
--- Wait for the Shared.Universe.Network.RemoteEvent path (for Event)
 local networkRoot = waitForPath(RS, {"Shared", "Universe", "Network", "RemoteEvent"})
 if not networkRoot then
     warn("[TX Script] Failed to load ReplicatedStorage.Shared.Universe.Network.RemoteEvent within 30s — aborting.")
@@ -41,57 +37,33 @@ if not networkRoot then
 end
 print("[TX Script] Shared.Universe.Network.RemoteEvent path loaded.")
 
--- Wait for Remotes (for EndDecision)
 local remotesRoot = waitForPath(RS, {"Remotes"})
 if not remotesRoot then
     warn("[TX Script] Failed to load ReplicatedStorage.Remotes within 30s — aborting.")
     return
 end
 
--- Now require the modules safely
 local world, comps, replicator, Remotes, PlayerData
-local ok1, err1 = pcall(function()
-    world = require(RS.Shared.Universe.ECS.world)
-end)
+local ok1, err1 = pcall(function() world = require(RS.Shared.Universe.ECS.world) end)
 if not ok1 then warn("[TX Script] require(world) failed: " .. tostring(err1)) return end
-
-local ok2, err2 = pcall(function()
-    comps = require(RS.Shared.Universe.ECS.components)
-end)
+local ok2, err2 = pcall(function() comps = require(RS.Shared.Universe.ECS.components) end)
 if not ok2 then warn("[TX Script] require(comps) failed: " .. tostring(err2)) return end
-
-local ok3, err3 = pcall(function()
-    replicator = require(RS.Client.Universe.Replication.clientReplicator)
-end)
+local ok3, err3 = pcall(function() replicator = require(RS.Client.Universe.Replication.clientReplicator) end)
 if not ok3 then warn("[TX Script] require(replicator) failed: " .. tostring(err3)) return end
-
-local ok4, err4 = pcall(function()
-    Remotes = require(RS.Shared.Universe.Remotes)
-end)
+local ok4, err4 = pcall(function() Remotes = require(RS.Shared.Universe.Remotes) end)
 if not ok4 then warn("[TX Script] require(Remotes) failed: " .. tostring(err4)) return end
-
-local ok5, err5 = pcall(function()
-    PlayerData = require(RS.Client.Universe.PlayerDataController)
-end)
+local ok5, err5 = pcall(function() PlayerData = require(RS.Client.Universe.PlayerDataController) end)
 if not ok5 then warn("[TX Script] require(PlayerData) failed: " .. tostring(err5)) return end
-
 print("[TX Script] All modules required successfully.")
 
 local Event       = networkRoot:WaitForChild("Actionable", 30)
-if not Event then
-    warn("[TX Script] Actionable RemoteEvent not found within 30s — aborting.")
-    return
-end
-
+if not Event then warn("[TX Script] Actionable not found within 30s — aborting.") return end
 local EndDecision = remotesRoot:WaitForChild("EndDecision", 30)
-if not EndDecision then
-    warn("[TX Script] EndDecision RemoteEvent not found within 30s — aborting.")
-    return
-end
-
+if not EndDecision then warn("[TX Script] EndDecision not found within 30s — aborting.") return end
 print("[TX Script] All remotes resolved.")
 
 local SCRIPT_URL             = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/peakfarming"
+local SCRIPT_SIGNATURE       = "--Open source by TX Script"
 local REQUIRED_EMPTY_SCANS   = 3
 local SCAN_INTERVAL          = 1
 local ENDDECISION_BUDGET     = 2000
@@ -122,10 +94,15 @@ local function registerQueue()
         warn("[TX Script] Could not fetch script source — queue_on_teleport NOT registered.")
         return false
     end
-    if src:find("404: Not Found", 1, true) or src:find("400: Invalid request", 1, true) then
-        warn("[TX Script] GitHub returned an error page — queue_on_teleport NOT registered.")
+
+    -- Positive check: source must START with the expected signature.
+    -- (Old negative check matched the string "404: Not Found" inside the script itself.)
+    if src:sub(1, #SCRIPT_SIGNATURE) ~= SCRIPT_SIGNATURE then
+        warn(("[TX Script] Fetched source has unexpected start (got: %q) — NOT registering."):format(
+            src:sub(1, 60)))
         return false
     end
+
     pcall(function() queue_on_teleport(src) end)
     print("[TX Script] queue_on_teleport registered (" .. #src .. " bytes)")
     return true
@@ -223,12 +200,10 @@ local function tryKillOnce()
         {name = "RespawnSvc",    fn = tryRespawnService},
         {name = "ResetRemotes",  fn = tryResetCharacterRemote},
     }
-
     for _, m in ipairs(methods) do
         local ok, result = pcall(m.fn)
         local success = ok and result ~= false
         print("[TX Script]   -> " .. m.name .. (success and " OK" or " skipped/failed"))
-
         if success then
             task.wait(0.2)
             if not charAlive() then
@@ -248,10 +223,8 @@ local function spamEndDecision()
     local remaining = ENDDECISION_BUDGET
     local fired = 0
     local failedStreak = 0
-
     print(("[TX Script] Spamming EndDecision(false) — budget %d, %d/burst..."):format(
         ENDDECISION_BUDGET, ENDDECISION_BURST))
-
     while remaining > 0 do
         if not endDecisionAlive() then
             print("[TX Script] EndDecision remote destroyed — stopping spam.")
@@ -261,11 +234,9 @@ local function spamEndDecision()
             print("[TX Script] LocalPlayer gone — stopping spam.")
             break
         end
-
         for i = 1, ENDDECISION_BURST do
             if remaining <= 0 then break end
             if not endDecisionAlive() then break end
-
             local ok = pcall(function() EndDecision:FireServer(false) end)
             if ok then
                 fired += 1
@@ -280,31 +251,25 @@ local function spamEndDecision()
             end
             remaining -= 1
         end
-
         if not charAlive() and fired > 0 then
             print(("[TX Script] Character down after %d fires — stopping spam."):format(fired))
             break
         end
-
         task.wait()
     end
-
     print(("[TX Script] Spam complete — %d fires sent, %d budget remaining."):format(fired, remaining))
 end
 
 local function triggerReset()
     print("[TX Script] Re-registering queue_on_teleport before reset...")
     registerQueue()
-
     print("[TX Script] Trying kill methods (one pass)...")
     local killedBy = tryKillOnce()
-
     if killedBy then
         print(("[TX Script] Character down via %s — starting EndDecision spam..."):format(killedBy))
     else
         print("[TX Script] No kill method worked — starting EndDecision spam anyway...")
     end
-
     spamEndDecision()
     print("[TX Script] Run complete — awaiting teleport reload.")
 end
@@ -312,10 +277,8 @@ end
 task.spawn(function()
     while not getLocalChar() do task.wait(0.5) end
     print("[TX Script] Initial character loaded. Starting single-run farm.")
-
     local emptyScanCount = 0
     local runComplete = false
-
     while not runComplete do
         local char = getLocalChar()
         if char then

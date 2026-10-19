@@ -1,0 +1,251 @@
+--Open source by TX Script
+
+local RS = game:GetService("ReplicatedStorage")
+local world       = require(RS.Shared.Universe.ECS.world)
+local comps       = require(RS.Shared.Universe.ECS.components)
+local replicator  = require(RS.Client.Universe.Replication.clientReplicator)
+local Remotes     = require(RS.Shared.Universe.Remotes)
+local PlayerData  = require(RS.Client.Universe.PlayerDataController)
+local Event       = RS.Shared.Universe.Network.RemoteEvent.Actionable
+local EndDecision = RS:WaitForChild("Remotes"):WaitForChild("EndDecision")
+local Players     = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local SCRIPT_URL             = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/peakfarming"
+local REQUIRED_EMPTY_SCANS   = 3
+local SCAN_INTERVAL          = 1
+local ENDDECISION_BUDGET     = 2000    -- total fires before forced stop
+local ENDDECISION_BURST      = 20      -- fires per frame before yielding
+-- ==================
+
+local queue_on_teleport = queue_on_teleport or function() end
+local httpget           = http_get or httpget or (game and game.HttpGet) or function() return "" end
+
+pcall(function()
+    local src = httpget(SCRIPT_URL)
+    if src and src ~= "" and #src > 50 then
+        queue_on_teleport(src)
+        print("[TX Script] queue_on_teleport registered (" .. #src .. " bytes)")
+    else
+        warn("[TX Script] Failed to fetch script source for queue_on_teleport")
+    end
+end)
+
+local function getLocalChar()
+    local ok, char = pcall(function()
+        return world:get_resource(comps.ClientStateResource).localCharacter
+    end)
+    if ok then return char end
+    return nil
+end
+
+local function getHumanoid()
+    local c = LocalPlayer.Character
+    if not c then return nil end
+    return c:FindFirstChildOfClass("Humanoid") or c:FindFirstChild("Humanoid")
+end
+
+local function charAlive()
+    local h = getHumanoid()
+    return h and h.Health > 0 and LocalPlayer.Character and LocalPlayer.Character.Parent ~= nil
+end
+
+local function tryKillHumanoid()
+    local h = getHumanoid()
+    if not h then return false end
+    pcall(function() h.Health = 0 end)
+    pcall(function() h.Health = -100 end)
+    return true
+end
+
+local function tryBreakJoints()
+    local c = LocalPlayer.Character
+    if not c then return false end
+    pcall(function() c:BreakJoints() end)
+    pcall(function()
+        for _, p in ipairs(c:GetChildren()) do
+            if p:IsA("BasePart") then
+                pcall(function() p:BreakJoints() end)
+            end
+        end
+    end)
+    return true
+end
+
+local function tryFallIntoVoid()
+    local c = LocalPlayer.Character
+    local hrp = c and c:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    pcall(function() hrp.CFrame = CFrame.new(0, -500000, 0) end)
+    return true
+end
+
+local function tryLoadCharacter()
+    return pcall(function() LocalPlayer:LoadCharacter() end)
+end
+
+local function tryRespawnService()
+    if Players.Respawn then
+        return pcall(function() Players:Respawn() end)
+    end
+    return false
+end
+
+local function tryResetCharacterRemote()
+    for _, name in ipairs({"ResetCharacter", "Respawn", "Reset", "LoadCharacter"}) do
+        local r = RS:FindFirstChild(name)
+        if not r then
+            local remotes = RS:FindFirstChild("Remotes")
+            if remotes then r = remotes:FindFirstChild(name) end
+        end
+        if not r and RS.Shared and RS.Shared.Universe and RS.Shared.Universe.Network and RS.Shared.Universe.Network.RemoteEvent then
+            r = RS.Shared.Universe.Network.RemoteEvent:FindFirstChild(name)
+        end
+        if r and r:IsA("RemoteEvent") then
+            local ok = pcall(function() r:FireServer() end)
+            if ok then return true end
+        elseif r and r:IsA("RemoteFunction") then
+            local ok = pcall(function() r:InvokeServer() end)
+            if ok then return true end
+        end
+    end
+    return false
+end
+
+local function tryKillOnce()
+    local methods = {
+        {name = "KillHumanoid",  fn = tryKillHumanoid},
+        {name = "BreakJoints",   fn = tryBreakJoints},
+        {name = "FallIntoVoid",  fn = tryFallIntoVoid},
+        {name = "LoadCharacter", fn = tryLoadCharacter},
+        {name = "RespawnSvc",    fn = tryRespawnService},
+        {name = "ResetRemotes",  fn = tryResetCharacterRemote},
+    }
+
+    for _, m in ipairs(methods) do
+        local ok, result = pcall(m.fn)
+        local success = ok and result ~= false
+        print("[TX Script]   -> " .. m.name .. (success and " OK" or " skipped/failed"))
+
+        if success then
+            task.wait(0.2)
+            if not charAlive() then
+                print("[TX Script] Kill confirmed via " .. m.name)
+                return m.name
+            end
+        end
+    end
+    return nil
+end
+
+local function endDecisionAlive()
+    return EndDecision and EndDecision.Parent and EndDecision:IsA("RemoteEvent")
+end
+
+local function spamEndDecision()
+    local remaining = ENDDECISION_BUDGET
+    local fired = 0
+    local failedStreak = 0
+
+    print(("[TX Script] Spamming EndDecision(false) — budget %d, %d/burst..."):format(
+        ENDDECISION_BUDGET, ENDDECISION_BURST))
+
+    while remaining > 0 do
+        if not endDecisionAlive() then
+            print("[TX Script] EndDecision remote destroyed — stopping spam.")
+            break
+        end
+        if not LocalPlayer or not LocalPlayer.Parent then
+            print("[TX Script] LocalPlayer gone — stopping spam.")
+            break
+        end
+
+        local burstFired = 0
+        for i = 1, ENDDECISION_BURST do
+            if remaining <= 0 then break end
+            if not endDecisionAlive() then break end
+
+            local ok = pcall(function() EndDecision:FireServer(false) end)
+            if ok then
+                fired += 1
+                burstFired += 1
+                failedStreak = 0
+            else
+                failedStreak += 1
+                if failedStreak >= 10 then
+                    print("[TX Script] 10 consecutive fire failures — stopping spam.")
+                    remaining = 0
+                    break
+                end
+            end
+            remaining -= 1
+        end
+
+        if not charAlive() and fired > 0 then
+            print(("[TX Script] Character down after %d fires — stopping spam."):format(fired))
+            break
+        end
+
+        task.wait()
+    end
+
+    print(("[TX Script] Spam complete — %d fires sent, %d budget remaining."):format(fired, remaining))
+end
+
+local function triggerReset()
+    print("[TX Script] Trying kill methods (one pass)...")
+    local killedBy = tryKillOnce()
+
+    if killedBy then
+        print(("[TX Script] Character down via %s — starting EndDecision spam..."):format(killedBy))
+    else
+        print("[TX Script] No kill method worked — starting EndDecision spam anyway...")
+    end
+
+    spamEndDecision()
+    print("[TX Script] Run complete — awaiting teleport reload.")
+end
+
+task.spawn(function()
+    while not getLocalChar() do task.wait(0.5) end
+    print("[TX Script] Initial character loaded. Starting single-run farm.")
+
+    local emptyScanCount = 0
+    local runComplete = false
+
+    while not runComplete do
+        local char = getLocalChar()
+        if char then
+            if not world:has(char, comps.Sack) then
+                world:add(char, comps.Sack)
+                world:set(char, comps.Sack, { contents = {}, maxContents = 10 })
+            end
+            local bondFound = false
+            for id = 1, 100000 do
+                if world:has(id, comps.Storable) and world:get(id, comps.ObjectId) == "bond" then
+                    bondFound = true
+                    local sr = replicator:get_server_entity(id)
+                    if sr and sr ~= id then
+                        Remotes.Store:FireServer(sr)
+                        Remotes.Store:FireServer()
+                        Event:FireServer(sr)
+                    end
+                end
+            end
+            if bondFound then
+                emptyScanCount = 0
+            else
+                emptyScanCount += 1
+                print(("[TX Script] No bonds detected (%d/%d empty scans)"):format(
+                    emptyScanCount, REQUIRED_EMPTY_SCANS))
+                if emptyScanCount >= REQUIRED_EMPTY_SCANS then
+                    triggerReset()
+                    runComplete = true
+                end
+            end
+        end
+        if not runComplete then
+            task.wait(SCAN_INTERVAL)
+        end
+    end
+end)

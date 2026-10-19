@@ -259,16 +259,16 @@ local function spamEndDecision()
     local remaining = ENDDECISION_BUDGET
     local fired = 0
     local failedStreak = 0
-    print(("[TX Script] Spamming EndDecision(false) — budget %d, %d/burst..."):format(
+    print(("[TX Script] [Thread] Spamming EndDecision(false) — budget %d, %d/burst..."):format(
         ENDDECISION_BUDGET, ENDDECISION_BURST))
     while remaining > 0 do
         if not endDecisionAlive() then
-            print("[TX Script] EndDecision remote destroyed — stopping spam.")
+            print("[TX Script] [Thread] EndDecision remote destroyed — stopping spam.")
             break
         end
         local lp = getLocalPlayer()
         if not lp or not lp.Parent then
-            print("[TX Script] LocalPlayer gone — stopping spam.")
+            print("[TX Script] [Thread] LocalPlayer gone — stopping spam.")
             break
         end
         for i = 1, ENDDECISION_BURST do
@@ -281,7 +281,7 @@ local function spamEndDecision()
             else
                 failedStreak += 1
                 if failedStreak >= 10 then
-                    print("[TX Script] 10 consecutive fire failures — stopping spam.")
+                    print("[TX Script] [Thread] 10 consecutive fire failures — stopping spam.")
                     remaining = 0
                     break
                 end
@@ -289,23 +289,33 @@ local function spamEndDecision()
             remaining -= 1
         end
         if not charAlive() and fired > 0 then
-            print(("[TX Script] Character down after %d fires — stopping spam."):format(fired))
+            print(("[TX Script] [Thread] Character down after %d fires — stopping spam."):format(fired))
             break
         end
         task.wait()
     end
-    print(("[TX Script] Spam complete — %d fires sent, %d budget remaining."):format(fired, remaining))
+    print(("[TX Script] [Thread] Spam complete — %d fires sent, %d budget remaining."):format(fired, remaining))
 end
 
 local function triggerReset()
-    print("[TX Script] Trying kill methods (one pass)...")
-    local killedBy = tryKillOnce()
-    if killedBy then
-        print(("[TX Script] Character down via %s — starting EndDecision spam..."):format(killedBy))
-    else
-        print("[TX Script] No kill method worked — starting EndDecision spam anyway...")
-    end
-    spamEndDecision()
+    print("[TX Script] Spawning EndDecision spam as independent thread...")
+    task.spawn(function()
+        pcall(spamEndDecision)
+    end)
+
+    print("[TX Script] Spawning kill attempts as independent thread...")
+    task.spawn(function()
+        pcall(function()
+            print("[TX Script] Trying kill methods (one pass)...")
+            local killedBy = tryKillOnce()
+            if killedBy then
+                print(("[TX Script] Character down via %s."):format(killedBy))
+            else
+                print("[TX Script] No kill method worked — relying on EndDecision spam alone.")
+            end
+        end)
+    end)
+
     print("[TX Script] Run complete — awaiting teleport reload.")
     if getgenv then
         getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false

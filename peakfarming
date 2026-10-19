@@ -1,15 +1,95 @@
 --Open source by TX Script
 
+local PLAYERS_SERVICE = game:GetService("Players")
+local LocalPlayer = PLAYERS_SERVICE.LocalPlayer
+
+-- Wait for the game to fully load before touching anything
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+print("[TX Script] game:IsLoaded() = true")
+
 local RS = game:GetService("ReplicatedStorage")
-local world       = require(RS.Shared.Universe.ECS.world)
-local comps       = require(RS.Shared.Universe.ECS.components)
-local replicator  = require(RS.Client.Universe.Replication.clientReplicator)
-local Remotes     = require(RS.Shared.Universe.Remotes)
-local PlayerData  = require(RS.Client.Universe.PlayerDataController)
-local Event       = RS.Shared.Universe.Network.RemoteEvent.Actionable
-local EndDecision = RS:WaitForChild("Remotes"):WaitForChild("EndDecision")
-local Players     = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
+
+-- Recursively WaitForChild with a 30s total timeout
+local function waitForPath(parent, names, totalTimeout)
+    totalTimeout = totalTimeout or 30
+    local deadline = os.clock() + totalTimeout
+    local current = parent
+    for _, name in ipairs(names) do
+        if not current then return nil end
+        local remaining = deadline - os.clock()
+        if remaining <= 0 then return nil end
+        current = current:WaitForChild(name, remaining)
+    end
+    return current
+end
+
+-- Wait for the Shared.Universe.ECS path before requiring modules
+local sharedRoot = waitForPath(RS, {"Shared", "Universe", "ECS"})
+if not sharedRoot then
+    warn("[TX Script] Failed to load ReplicatedStorage.Shared.Universe.ECS within 30s — aborting.")
+    return
+end
+print("[TX Script] Shared.Universe.ECS path loaded.")
+
+-- Wait for the Shared.Universe.Network.RemoteEvent path (for Event)
+local networkRoot = waitForPath(RS, {"Shared", "Universe", "Network", "RemoteEvent"})
+if not networkRoot then
+    warn("[TX Script] Failed to load ReplicatedStorage.Shared.Universe.Network.RemoteEvent within 30s — aborting.")
+    return
+end
+print("[TX Script] Shared.Universe.Network.RemoteEvent path loaded.")
+
+-- Wait for Remotes (for EndDecision)
+local remotesRoot = waitForPath(RS, {"Remotes"})
+if not remotesRoot then
+    warn("[TX Script] Failed to load ReplicatedStorage.Remotes within 30s — aborting.")
+    return
+end
+
+-- Now require the modules safely
+local world, comps, replicator, Remotes, PlayerData
+local ok1, err1 = pcall(function()
+    world = require(RS.Shared.Universe.ECS.world)
+end)
+if not ok1 then warn("[TX Script] require(world) failed: " .. tostring(err1)) return end
+
+local ok2, err2 = pcall(function()
+    comps = require(RS.Shared.Universe.ECS.components)
+end)
+if not ok2 then warn("[TX Script] require(comps) failed: " .. tostring(err2)) return end
+
+local ok3, err3 = pcall(function()
+    replicator = require(RS.Client.Universe.Replication.clientReplicator)
+end)
+if not ok3 then warn("[TX Script] require(replicator) failed: " .. tostring(err3)) return end
+
+local ok4, err4 = pcall(function()
+    Remotes = require(RS.Shared.Universe.Remotes)
+end)
+if not ok4 then warn("[TX Script] require(Remotes) failed: " .. tostring(err4)) return end
+
+local ok5, err5 = pcall(function()
+    PlayerData = require(RS.Client.Universe.PlayerDataController)
+end)
+if not ok5 then warn("[TX Script] require(PlayerData) failed: " .. tostring(err5)) return end
+
+print("[TX Script] All modules required successfully.")
+
+local Event       = networkRoot:WaitForChild("Actionable", 30)
+if not Event then
+    warn("[TX Script] Actionable RemoteEvent not found within 30s — aborting.")
+    return
+end
+
+local EndDecision = remotesRoot:WaitForChild("EndDecision", 30)
+if not EndDecision then
+    warn("[TX Script] EndDecision RemoteEvent not found within 30s — aborting.")
+    return
+end
+
+print("[TX Script] All remotes resolved.")
 
 local SCRIPT_URL             = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/peakfarming"
 local REQUIRED_EMPTY_SCANS   = 3
@@ -107,8 +187,8 @@ local function tryLoadCharacter()
 end
 
 local function tryRespawnService()
-    if Players.Respawn then
-        return pcall(function() Players:Respawn() end)
+    if PLAYERS_SERVICE.Respawn then
+        return pcall(function() PLAYERS_SERVICE:Respawn() end)
     end
     return false
 end
@@ -182,7 +262,6 @@ local function spamEndDecision()
             break
         end
 
-        local burstFired = 0
         for i = 1, ENDDECISION_BURST do
             if remaining <= 0 then break end
             if not endDecisionAlive() then break end
@@ -190,7 +269,6 @@ local function spamEndDecision()
             local ok = pcall(function() EndDecision:FireServer(false) end)
             if ok then
                 fired += 1
-                burstFired += 1
                 failedStreak = 0
             else
                 failedStreak += 1

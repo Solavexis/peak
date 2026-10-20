@@ -1,20 +1,18 @@
---Open source by TX Script
-
 local PLAYERS_SERVICE = game:GetService("Players")
 
 if getgenv then
     if getgenv().TX_SCRIPT_BOND_FARM_RUNNING then
-        warn("[TX Script] Duplicate execution detected — aborting this instance.")
+        warn("Duplicate execution detected — aborting this instance.")
         return
     end
     getgenv().TX_SCRIPT_BOND_FARM_RUNNING = true
-    print("[TX Script] Singleton flag set — this is the only running instance.")
+    print("Singleton flag set — this is the only running instance.")
 end
 
 if not game:IsLoaded() then
     game.Loaded:Wait()
 end
-print("[TX Script] game:IsLoaded() = true")
+print("game:IsLoaded() = true")
 
 local RS = game:GetService("ReplicatedStorage")
 
@@ -33,45 +31,45 @@ end
 
 local sharedRoot = waitForPath(RS, {"Shared", "Universe", "ECS"})
 if not sharedRoot then
-    warn("[TX Script] Failed to load ReplicatedStorage.Shared.Universe.ECS within 30s — aborting.")
+    warn("Failed to load ReplicatedStorage.Shared.Universe.ECS within 30s — aborting.")
     if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end
     return
 end
-print("[TX Script] Shared.Universe.ECS path loaded.")
+print("Shared.Universe.ECS path loaded.")
 
 local networkRoot = waitForPath(RS, {"Shared", "Universe", "Network", "RemoteEvent"})
 if not networkRoot then
-    warn("[TX Script] Failed to load ReplicatedStorage.Shared.Universe.Network.RemoteEvent within 30s — aborting.")
+    warn("Failed to load ReplicatedStorage.Shared.Universe.Network.RemoteEvent within 30s — aborting.")
     if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end
     return
 end
-print("[TX Script] Shared.Universe.Network.RemoteEvent path loaded.")
+print("Shared.Universe.Network.RemoteEvent path loaded.")
 
 local remotesRoot = waitForPath(RS, {"Remotes"})
 if not remotesRoot then
-    warn("[TX Script] Failed to load ReplicatedStorage.Remotes within 30s — aborting.")
+    warn("Failed to load ReplicatedStorage.Remotes within 30s — aborting.")
     if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end
     return
 end
 
 local world, comps, replicator, Remotes, PlayerData
 local ok1, err1 = pcall(function() world = require(RS.Shared.Universe.ECS.world) end)
-if not ok1 then warn("[TX Script] require(world) failed: " .. tostring(err1)) if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end return end
+if not ok1 then warn("require(world) failed: " .. tostring(err1)) if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end return end
 local ok2, err2 = pcall(function() comps = require(RS.Shared.Universe.ECS.components) end)
-if not ok2 then warn("[TX Script] require(comps) failed: " .. tostring(err2)) if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end return end
+if not ok2 then warn("require(comps) failed: " .. tostring(err2)) if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end return end
 local ok3, err3 = pcall(function() replicator = require(RS.Client.Universe.Replication.clientReplicator) end)
-if not ok3 then warn("[TX Script] require(replicator) failed: " .. tostring(err3)) if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end return end
+if not ok3 then warn("require(replicator) failed: " .. tostring(err3)) if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end return end
 local ok4, err4 = pcall(function() Remotes = require(RS.Shared.Universe.Remotes) end)
-if not ok4 then warn("[TX Script] require(Remotes) failed: " .. tostring(err4)) if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end return end
+if not ok4 then warn("require(Remotes) failed: " .. tostring(err4)) if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end return end
 local ok5, err5 = pcall(function() PlayerData = require(RS.Client.Universe.PlayerDataController) end)
-if not ok5 then warn("[TX Script] require(PlayerData) failed: " .. tostring(err5)) if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end return end
-print("[TX Script] All modules required successfully.")
+if not ok5 then warn("require(PlayerData) failed: " .. tostring(err5)) if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end return end
+print("All modules required successfully.")
 
 local Event = networkRoot:WaitForChild("Actionable", 30)
-if not Event then warn("[TX Script] Actionable not found within 30s — aborting.") if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end return end
+if not Event then warn("Actionable not found within 30s — aborting.") if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end return end
 local EndDecision = remotesRoot:WaitForChild("EndDecision", 30)
-if not EndDecision then warn("[TX Script] EndDecision not found within 30s — aborting.") if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end return end
-print("[TX Script] All remotes resolved.")
+if not EndDecision then warn("EndDecision not found within 30s — aborting.") if getgenv then getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false end return end
+print("All remotes resolved.")
 
 local SCRIPT_URL = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/peakfarming"
 local SCRIPT_SIGNATURE = "--Open source by TX Script"
@@ -102,22 +100,22 @@ end
 local queueRegistered = false
 local function registerQueue()
     if queueRegistered then
-        print("[TX Script] queue_on_teleport already registered this run — skipping.")
+        print("queue_on_teleport already registered this run — skipping.")
         return true
     end
     local src = fetchScriptSource()
     if not src then
-        warn("[TX Script] Could not fetch script source — queue_on_teleport NOT registered.")
+        warn("Could not fetch script source — queue_on_teleport NOT registered.")
         return false
     end
     if src:sub(1, #SCRIPT_SIGNATURE) ~= SCRIPT_SIGNATURE then
-        warn(("[TX Script] Fetched source has unexpected start (got: %q) — NOT registering."):format(
+        warn(("Fetched source has unexpected start (got: %q) — NOT registering."):format(
             src:sub(1, 60)))
         return false
     end
     pcall(function() queue_on_teleport(src) end)
     queueRegistered = true
-    print("[TX Script] queue_on_teleport registered (" .. #src .. " bytes) — registered ONCE this run.")
+    print("queue_on_teleport registered (" .. #src .. " bytes) — registered ONCE this run.")
     return true
 end
 
@@ -239,11 +237,11 @@ local function tryKillOnce()
     for _, m in ipairs(methods) do
         local ok, result = pcall(m.fn)
         local success = ok and result ~= false
-        print("[TX Script]   -> " .. m.name .. (success and " OK" or " skipped/failed"))
+        print("  -> " .. m.name .. (success and " OK" or " skipped/failed"))
         if success then
             task.wait(0.2)
             if not charAlive() then
-                print("[TX Script] Kill confirmed via " .. m.name)
+                print("Kill confirmed via " .. m.name)
                 return m.name
             end
         end
@@ -259,16 +257,16 @@ local function spamEndDecision()
     local remaining = ENDDECISION_BUDGET
     local fired = 0
     local failedStreak = 0
-    print(("[TX Script] [Thread] Spamming EndDecision(false) — budget %d, %d/burst..."):format(
+    print(("[Thread] Spamming EndDecision(false) — budget %d, %d/burst..."):format(
         ENDDECISION_BUDGET, ENDDECISION_BURST))
     while remaining > 0 do
         if not endDecisionAlive() then
-            print("[TX Script] [Thread] EndDecision remote destroyed — stopping spam.")
+            print("[Thread] EndDecision remote destroyed — stopping spam.")
             break
         end
         local lp = getLocalPlayer()
         if not lp or not lp.Parent then
-            print("[TX Script] [Thread] LocalPlayer gone — stopping spam.")
+            print("[Thread] LocalPlayer gone — stopping spam.")
             break
         end
         for i = 1, ENDDECISION_BURST do
@@ -281,7 +279,7 @@ local function spamEndDecision()
             else
                 failedStreak += 1
                 if failedStreak >= 10 then
-                    print("[TX Script] [Thread] 10 consecutive fire failures — stopping spam.")
+                    print("[Thread] 10 consecutive fire failures — stopping spam.")
                     remaining = 0
                     break
                 end
@@ -289,43 +287,43 @@ local function spamEndDecision()
             remaining -= 1
         end
         if not charAlive() and fired > 0 then
-            print(("[TX Script] [Thread] Character down after %d fires — stopping spam."):format(fired))
+            print(("[Thread] Character down after %d fires — stopping spam."):format(fired))
             break
         end
         task.wait()
     end
-    print(("[TX Script] [Thread] Spam complete — %d fires sent, %d budget remaining."):format(fired, remaining))
+    print(("[Thread] Spam complete — %d fires sent, %d budget remaining."):format(fired, remaining))
 end
 
 local function triggerReset()
-    print("[TX Script] Spawning EndDecision spam as independent thread...")
+    print("Spawning EndDecision spam as independent thread...")
     task.spawn(function()
         pcall(spamEndDecision)
     end)
 
-    print("[TX Script] Spawning kill attempts as independent thread...")
+    print("Spawning kill attempts as independent thread...")
     task.spawn(function()
         pcall(function()
-            print("[TX Script] Trying kill methods (one pass)...")
+            print("Trying kill methods (one pass)...")
             local killedBy = tryKillOnce()
             if killedBy then
-                print(("[TX Script] Character down via %s."):format(killedBy))
+                print(("Character down via %s."):format(killedBy))
             else
-                print("[TX Script] No kill method worked — relying on EndDecision spam alone.")
+                print("No kill method worked — relying on EndDecision spam alone.")
             end
         end)
     end)
 
-    print("[TX Script] Run complete — awaiting teleport reload.")
+    print("Run complete — awaiting teleport reload.")
     if getgenv then
         getgenv().TX_SCRIPT_BOND_FARM_RUNNING = false
-        print("[TX Script] Singleton flag cleared for next run.")
+        print("Singleton flag cleared for next run.")
     end
 end
 
 task.spawn(function()
     while not getLocalChar() do task.wait(0.5) end
-    print("[TX Script] Initial character loaded. Starting single-run farm.")
+    print("Initial character loaded. Starting single-run farm.")
     local emptyScanCount = 0
     local runComplete = false
     while not runComplete do
@@ -351,7 +349,7 @@ task.spawn(function()
                 emptyScanCount = 0
             else
                 emptyScanCount += 1
-                print(("[TX Script] No bonds detected (%d/%d empty scans)"):format(
+                print(("No bonds detected (%d/%d empty scans)"):format(
                     emptyScanCount, REQUIRED_EMPTY_SCANS))
                 if emptyScanCount >= REQUIRED_EMPTY_SCANS then
                     triggerReset()

@@ -1,3 +1,5 @@
+--Open source
+
 local PLAYERS_SERVICE = game:GetService("Players")
 
 if getgenv then
@@ -72,7 +74,7 @@ if not EndDecision then warn("EndDecision not found within 30s — aborting.") i
 print("All remotes resolved.")
 
 local SCRIPT_URL = "https://raw.githubusercontent.com/Solavexis/peak/refs/heads/main/peakfarming"
-local SCRIPT_SIGNATURE = "--Open source by TX Script"
+local SCRIPT_SIGNATURE = "--Open source"
 local REQUIRED_EMPTY_SCANS = 3
 local SCAN_INTERVAL = 1
 local ENDDECISION_BUDGET = 2000
